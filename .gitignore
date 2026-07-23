@@ -1,0 +1,10 @@
+node_modules
+.next
+.next-a
+.next-b
+data/
+bin/
+.env*
+.server*.log
+.verify-server.log
+tsconfig.tsbuildinfo

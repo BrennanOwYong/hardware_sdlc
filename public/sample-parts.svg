@@ -1,0 +1,146 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800" font-family="Arial, Helvetica, sans-serif">
+  <!--
+    Forge sample parts sheet (simulated workspace).
+    Part bounding boxes (pixel rects, keep in sync with lib/inventory/mock.ts):
+      ESP32 DevKit          (60,  70,  200, 300)
+      Half-size breadboard  (320, 70,  440, 220)
+      DHT11 sensor          (820, 70,  130, 170)
+      Pushbutton            (1010,70,  120, 120)
+      LED (red)             (1010,250, 110, 160)
+      Jumper wire (red)     (320, 330, 440, 50)
+      Jumper wire (blue)    (320, 390, 440, 50)
+      Jumper wire (yellow)  (320, 450, 440, 50)
+      Jumper wire (green)   (320, 510, 440, 50)
+      220 ohm resistor #1   (820, 460, 320, 40)
+      220 ohm resistor #2   (820, 540, 320, 40)
+      10 kohm resistor      (820, 620, 320, 40)
+  -->
+  <defs>
+    <pattern id="holes" width="18" height="18" patternUnits="userSpaceOnUse">
+      <circle cx="9" cy="9" r="2.4" fill="#55606a"/>
+    </pattern>
+    <pattern id="dhtgrid" width="14" height="14" patternUnits="userSpaceOnUse">
+      <rect x="2" y="2" width="8" height="8" fill="none" stroke="#1e5aa8" stroke-width="1.5"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="800" fill="#e9e5db"/>
+  <text x="60" y="782" font-size="15" fill="#8a8577">Forge sample parts sheet — simulated workspace (image cutouts stand in for real parts)</text>
+
+  <!-- ESP32 DevKit : bbox (60,70,200,300) -->
+  <g>
+    <g fill="#d9b64c">
+      <rect x="60" y="105" width="10" height="10"/><rect x="60" y="125" width="10" height="10"/>
+      <rect x="60" y="145" width="10" height="10"/><rect x="60" y="165" width="10" height="10"/>
+      <rect x="60" y="185" width="10" height="10"/><rect x="60" y="205" width="10" height="10"/>
+      <rect x="60" y="225" width="10" height="10"/><rect x="60" y="245" width="10" height="10"/>
+      <rect x="60" y="265" width="10" height="10"/><rect x="60" y="285" width="10" height="10"/>
+      <rect x="60" y="305" width="10" height="10"/><rect x="60" y="325" width="10" height="10"/>
+      <rect x="250" y="105" width="10" height="10"/><rect x="250" y="125" width="10" height="10"/>
+      <rect x="250" y="145" width="10" height="10"/><rect x="250" y="165" width="10" height="10"/>
+      <rect x="250" y="185" width="10" height="10"/><rect x="250" y="205" width="10" height="10"/>
+      <rect x="250" y="225" width="10" height="10"/><rect x="250" y="245" width="10" height="10"/>
+      <rect x="250" y="265" width="10" height="10"/><rect x="250" y="285" width="10" height="10"/>
+      <rect x="250" y="305" width="10" height="10"/><rect x="250" y="325" width="10" height="10"/>
+    </g>
+    <rect x="70" y="80" width="180" height="280" rx="10" fill="#16202e" stroke="#0b111b" stroke-width="3"/>
+    <rect x="105" y="100" width="110" height="85" rx="6" fill="#c3c8cf" stroke="#858c96" stroke-width="2"/>
+    <text x="160" y="140" text-anchor="middle" font-size="18" fill="#2b3442">ESP32</text>
+    <text x="160" y="162" text-anchor="middle" font-size="11" fill="#4a5261">WROOM-32</text>
+    <rect x="82" y="326" width="18" height="12" rx="2" fill="#3a4250"/>
+    <rect x="220" y="326" width="18" height="12" rx="2" fill="#3a4250"/>
+    <rect x="132" y="334" width="56" height="24" rx="3" fill="#98a0ab" stroke="#6c7480" stroke-width="2"/>
+    <text x="160" y="392" text-anchor="middle" font-size="20" fill="#4a463c">ESP32 DevKit</text>
+  </g>
+
+  <!-- Half-size breadboard : bbox (320,70,440,220) -->
+  <g>
+    <rect x="320" y="70" width="440" height="220" rx="8" fill="#f7f6f1" stroke="#c9c6bb" stroke-width="2"/>
+    <line x1="340" y1="92" x2="740" y2="92" stroke="#d64541" stroke-width="3"/>
+    <line x1="340" y1="106" x2="740" y2="106" stroke="#3b6fd4" stroke-width="3"/>
+    <rect x="336" y="120" width="410" height="58" fill="url(#holes)"/>
+    <rect x="320" y="180" width="440" height="12" fill="#e3e1d8"/>
+    <rect x="336" y="196" width="410" height="58" fill="url(#holes)"/>
+    <line x1="340" y1="264" x2="740" y2="264" stroke="#3b6fd4" stroke-width="3"/>
+    <line x1="340" y1="277" x2="740" y2="277" stroke="#d64541" stroke-width="3"/>
+    <text x="540" y="316" text-anchor="middle" font-size="20" fill="#4a463c">Half-size breadboard</text>
+  </g>
+
+  <!-- DHT11 sensor : bbox (820,70,130,170) -->
+  <g>
+    <rect x="830" y="80" width="110" height="125" rx="6" fill="#2f7fd6" stroke="#1e5aa8" stroke-width="3"/>
+    <rect x="842" y="92" width="86" height="76" fill="url(#dhtgrid)"/>
+    <text x="885" y="194" text-anchor="middle" font-size="16" fill="#eaf2ff">DHT11</text>
+    <rect x="845" y="205" width="6" height="32" fill="#8a929c"/>
+    <rect x="869" y="205" width="6" height="32" fill="#8a929c"/>
+    <rect x="893" y="205" width="6" height="32" fill="#8a929c"/>
+    <rect x="917" y="205" width="6" height="32" fill="#8a929c"/>
+    <text x="885" y="264" text-anchor="middle" font-size="20" fill="#4a463c">DHT11 sensor</text>
+  </g>
+
+  <!-- Pushbutton : bbox (1010,70,120,120) -->
+  <g>
+    <rect x="1010" y="96" width="10" height="7" fill="#8a929c"/>
+    <rect x="1010" y="156" width="10" height="7" fill="#8a929c"/>
+    <rect x="1120" y="96" width="10" height="7" fill="#8a929c"/>
+    <rect x="1120" y="156" width="10" height="7" fill="#8a929c"/>
+    <rect x="1018" y="80" width="104" height="100" rx="10" fill="#3a3f45" stroke="#23272c" stroke-width="3"/>
+    <circle cx="1070" cy="130" r="30" fill="#b8352f" stroke="#7e211d" stroke-width="3"/>
+    <circle cx="1070" cy="130" r="14" fill="#d4544e"/>
+    <text x="1070" y="214" text-anchor="middle" font-size="20" fill="#4a463c">Pushbutton</text>
+  </g>
+
+  <!-- LED (red) : bbox (1010,250,110,160) -->
+  <g>
+    <path d="M1035 310 a30 30 0 0 1 60 0 v30 h-60 z" fill="#e0342e" stroke="#9c1f1a" stroke-width="3"/>
+    <circle cx="1052" cy="298" r="7" fill="#ff8f88"/>
+    <rect x="1028" y="340" width="74" height="8" fill="#c8302a"/>
+    <line x1="1050" y1="348" x2="1050" y2="405" stroke="#8a929c" stroke-width="5"/>
+    <line x1="1080" y1="348" x2="1080" y2="388" stroke="#8a929c" stroke-width="5"/>
+    <text x="1065" y="432" text-anchor="middle" font-size="20" fill="#4a463c">LED (red)</text>
+  </g>
+
+  <!-- Jumper wires : bboxes (320, 330/390/450/510, 440, 50) -->
+  <g stroke-linecap="round" fill="none">
+    <path d="M336 355 C 450 334, 630 376, 744 355" stroke="#d64541" stroke-width="9"/>
+    <path d="M336 415 C 450 436, 630 394, 744 415" stroke="#3b6fd4" stroke-width="9"/>
+    <path d="M336 475 C 450 454, 630 496, 744 475" stroke="#e0b62e" stroke-width="9"/>
+    <path d="M336 535 C 450 556, 630 514, 744 535" stroke="#3fae5a" stroke-width="9"/>
+  </g>
+  <g fill="#2c2f33">
+    <rect x="324" y="347" width="14" height="16" rx="2"/><rect x="742" y="347" width="14" height="16" rx="2"/>
+    <rect x="324" y="407" width="14" height="16" rx="2"/><rect x="742" y="407" width="14" height="16" rx="2"/>
+    <rect x="324" y="467" width="14" height="16" rx="2"/><rect x="742" y="467" width="14" height="16" rx="2"/>
+    <rect x="324" y="527" width="14" height="16" rx="2"/><rect x="742" y="527" width="14" height="16" rx="2"/>
+  </g>
+  <text x="540" y="588" text-anchor="middle" font-size="18" fill="#4a463c">Jumper wires ×4 (red, blue, yellow, green)</text>
+
+  <!-- Resistors : bboxes (820, 460/540/620, 320, 40) -->
+  <g>
+    <line x1="826" y1="480" x2="1134" y2="480" stroke="#9aa2ac" stroke-width="5"/>
+    <rect x="912" y="462" width="136" height="36" rx="14" fill="#d9b98c" stroke="#a9855c" stroke-width="2"/>
+    <rect x="930" y="462" width="8" height="36" fill="#c0392b"/>
+    <rect x="948" y="462" width="8" height="36" fill="#c0392b"/>
+    <rect x="966" y="462" width="8" height="36" fill="#7a4a21"/>
+    <rect x="1020" y="462" width="8" height="36" fill="#c9a227"/>
+    <text x="980" y="518" text-anchor="middle" font-size="17" fill="#4a463c">220 Ω resistor</text>
+  </g>
+  <g>
+    <line x1="826" y1="560" x2="1134" y2="560" stroke="#9aa2ac" stroke-width="5"/>
+    <rect x="912" y="542" width="136" height="36" rx="14" fill="#d9b98c" stroke="#a9855c" stroke-width="2"/>
+    <rect x="930" y="542" width="8" height="36" fill="#c0392b"/>
+    <rect x="948" y="542" width="8" height="36" fill="#c0392b"/>
+    <rect x="966" y="542" width="8" height="36" fill="#7a4a21"/>
+    <rect x="1020" y="542" width="8" height="36" fill="#c9a227"/>
+    <text x="980" y="598" text-anchor="middle" font-size="17" fill="#4a463c">220 Ω resistor</text>
+  </g>
+  <g>
+    <line x1="826" y1="640" x2="1134" y2="640" stroke="#9aa2ac" stroke-width="5"/>
+    <rect x="912" y="622" width="136" height="36" rx="14" fill="#d9b98c" stroke="#a9855c" stroke-width="2"/>
+    <rect x="930" y="622" width="8" height="36" fill="#7a4a21"/>
+    <rect x="948" y="622" width="8" height="36" fill="#222222"/>
+    <rect x="966" y="622" width="8" height="36" fill="#e07020"/>
+    <rect x="1020" y="622" width="8" height="36" fill="#c9a227"/>
+    <text x="980" y="678" text-anchor="middle" font-size="17" fill="#4a463c">10 kΩ resistor</text>
+  </g>
+</svg>
