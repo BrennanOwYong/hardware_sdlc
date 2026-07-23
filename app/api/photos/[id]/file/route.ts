@@ -1,6 +1,6 @@
 // GET /api/photos/<id>/file -> the stored image bytes.
-// Streams from data/photos/ at request time. public/ is snapshotted at build
-// time in production, so runtime-stored user content must never live there.
+// Streams from data/images/user/ at request time. public/ is snapshotted at
+// build time in production, so runtime-stored user content must never live there.
 // Binary Response shape per the Next.js route.js docs (docs/references-photolib.md).
 
 import { NextResponse } from "next/server";

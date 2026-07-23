@@ -22,12 +22,22 @@ export const MAX_REGIONS = 12;
 export const MIN_REGION_AREA = 0.005;
 /** Two boxes with IoU above this are duplicates; the larger one wins. */
 export const MAX_REGION_IOU = 0.5;
+/** Compact masks are downscaled so their long edge is at most this. */
+export const MAX_MASK_EDGE = 640;
+/** Base64 mask payload budget per image (~2 MB of response characters). */
+export const MAX_TOTAL_MASK_BYTES = 2 * 1024 * 1024;
 
 export interface SamBox {
   /** Normalized [x, y, width, height], top-left origin, all in 0..1. */
   bbox: [number, number, number, number];
   /** Mask pixel count over total pixels (0..1) — tighter than bbox area. */
   area: number;
+  /**
+   * Compact binary mask of the region as a base64 PNG (no data: prefix):
+   * white opaque where the object is, transparent elsewhere, long edge
+   * capped at MAX_MASK_EDGE. Absent when the payload cap dropped it.
+   */
+  maskPng?: string;
 }
 
 export interface SamSegmentation {
@@ -51,32 +61,51 @@ export function chooseIdentifyMode(env: {
   return env.hasReplicateToken ? "sam+vlm" : "vlm";
 }
 
+/** One-byte-per-pixel binary mask: on[y * width + x] is 1 on the object. */
+export interface BinaryMask {
+  width: number;
+  height: number;
+  on: Uint8Array;
+}
+
 /**
- * Tight bounding box over the "on" pixels of an RGBA mask buffer
- * (pngjs inflates every PNG to RGBA). A pixel is on when any color channel
- * exceeds 127 — SAM masks are white-on-black. Returns null for empty masks.
- * A mask holding two separate blobs yields the union box over both.
+ * Threshold an RGBA mask buffer (pngjs inflates every PNG to RGBA) into a
+ * binary mask. A pixel is on when any color channel exceeds 127 — SAM masks
+ * are white-on-black.
  */
-export function maskToBox(
+export function rgbaToBinaryMask(
   data: Uint8Array,
   width: number,
   height: number,
-): SamBox | null {
+): BinaryMask {
   if (data.length < width * height * 4) {
     throw new Error(
       `mask buffer too small: ${data.length} bytes for ${width}x${height} RGBA`,
     );
   }
+  const on = new Uint8Array(width * height);
+  for (let p = 0; p < on.length; p++) {
+    const i = p * 4;
+    if (data[i] > 127 || data[i + 1] > 127 || data[i + 2] > 127) on[p] = 1;
+  }
+  return { width, height, on };
+}
+
+/**
+ * Tight bounding box over the on pixels of a binary mask. Returns null for
+ * empty masks. A mask holding two separate blobs yields the union box.
+ */
+export function binaryMaskToBox(mask: BinaryMask): SamBox | null {
+  const { width, height, on } = mask;
   let minX = width;
   let minY = height;
   let maxX = -1;
   let maxY = -1;
   let onCount = 0;
   for (let y = 0; y < height; y++) {
-    const rowStart = y * width * 4;
+    const rowStart = y * width;
     for (let x = 0; x < width; x++) {
-      const i = rowStart + x * 4;
-      if (data[i] > 127 || data[i + 1] > 127 || data[i + 2] > 127) {
+      if (on[rowStart + x]) {
         onCount++;
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
@@ -97,10 +126,156 @@ export function maskToBox(
   };
 }
 
+/**
+ * Tight bounding box over the "on" pixels of an RGBA mask buffer. A pixel is
+ * on when any color channel exceeds 127. Returns null for empty masks.
+ */
+export function maskToBox(
+  data: Uint8Array,
+  width: number,
+  height: number,
+): SamBox | null {
+  return binaryMaskToBox(rgbaToBinaryMask(data, width, height));
+}
+
 /** Decode a mask PNG (Buffer/Uint8Array of the file bytes) to its box. */
 export function decodeMaskToBox(pngBytes: Uint8Array): SamBox | null {
   const png = PNG.sync.read(Buffer.from(pngBytes));
   return maskToBox(png.data, png.width, png.height);
+}
+
+/**
+ * Downscale a binary mask so its long edge is at most maxEdge, preserving
+ * aspect (short edge rounds, floor 1). Never upscales — a mask already
+ * within the bound comes back unchanged. Each destination pixel max-pools
+ * its source cell (on if ANY covered source pixel is on) so 1-px structures
+ * like jumper wires survive the shrink.
+ */
+export function downscaleBinaryMask(
+  mask: BinaryMask,
+  maxEdge: number = MAX_MASK_EDGE,
+): BinaryMask {
+  const { width, height, on } = mask;
+  if (Math.max(width, height) <= maxEdge) return mask;
+  const outW =
+    width >= height ? maxEdge : Math.max(1, Math.round((width * maxEdge) / height));
+  const outH =
+    height > width ? maxEdge : Math.max(1, Math.round((height * maxEdge) / width));
+  const out = new Uint8Array(outW * outH);
+  for (let oy = 0; oy < outH; oy++) {
+    const y0 = Math.floor((oy * height) / outH);
+    const y1 = Math.min(height - 1, Math.ceil(((oy + 1) * height) / outH) - 1);
+    for (let ox = 0; ox < outW; ox++) {
+      const x0 = Math.floor((ox * width) / outW);
+      const x1 = Math.min(width - 1, Math.ceil(((ox + 1) * width) / outW) - 1);
+      let hit = 0;
+      scan: for (let y = y0; y <= y1; y++) {
+        const rowStart = y * width;
+        for (let x = x0; x <= x1; x++) {
+          if (on[rowStart + x]) {
+            hit = 1;
+            break scan;
+          }
+        }
+      }
+      out[oy * outW + ox] = hit;
+    }
+  }
+  return { width: outW, height: outH, on: out };
+}
+
+/**
+ * Encode a binary mask as a base64 PNG (no data: prefix): white opaque
+ * where on, fully transparent elsewhere. colorType 6 keeps the alpha
+ * channel (pngjs README; docs/references-masks.md).
+ */
+export function encodeMaskPng(mask: BinaryMask): string {
+  const png = new PNG({ width: mask.width, height: mask.height });
+  // pngjs pre-allocates png.data zero-filled (transparent black).
+  for (let p = 0; p < mask.on.length; p++) {
+    if (mask.on[p]) {
+      const i = p * 4;
+      png.data[i] = 255;
+      png.data[i + 1] = 255;
+      png.data[i + 2] = 255;
+      png.data[i + 3] = 255;
+    }
+  }
+  return PNG.sync.write(png, { colorType: 6 }).toString("base64");
+}
+
+export interface MaskRegion {
+  /** Box computed at full mask resolution (tightest bbox). */
+  box: SamBox;
+  /** Binary mask already downscaled to at most maxEdge on the long edge. */
+  mask: BinaryMask;
+}
+
+/**
+ * Decode a mask PNG to its full-resolution box plus a compact binary mask
+ * for later re-encoding. Returns null for empty masks.
+ */
+export function decodeMaskRegion(
+  pngBytes: Uint8Array,
+  maxEdge: number = MAX_MASK_EDGE,
+): MaskRegion | null {
+  const png = PNG.sync.read(Buffer.from(pngBytes));
+  const full = rgbaToBinaryMask(png.data, png.width, png.height);
+  const box = binaryMaskToBox(full);
+  if (!box) return null;
+  return { box, mask: downscaleBinaryMask(full, maxEdge) };
+}
+
+export interface CapMaskResult {
+  /** Same boxes in the same order; some may have lost their maskPng. */
+  boxes: SamBox[];
+  /** How many regions had their mask dropped by the payload budget. */
+  masksDropped: number;
+}
+
+/**
+ * Enforce the per-image mask payload budget. Regions keep their masks in
+ * area-descending order (biggest objects matter most for highlighting)
+ * until the base64 budget runs out; later masks are dropped while their
+ * boxes stay. Non-mutating; box order is preserved.
+ */
+export function capMaskPayload(
+  boxes: SamBox[],
+  maxTotalBytes: number = MAX_TOTAL_MASK_BYTES,
+): CapMaskResult {
+  const entries: Array<{ index: number; area: number; bytes: number }> = [];
+  boxes.forEach((box, index) => {
+    if (box.maskPng !== undefined) {
+      entries.push({ index, area: box.area, bytes: box.maskPng.length });
+    }
+  });
+  entries.sort((a, b) => b.area - a.area);
+  const drop = new Set<number>();
+  let total = 0;
+  for (const entry of entries) {
+    if (total + entry.bytes <= maxTotalBytes) total += entry.bytes;
+    else drop.add(entry.index);
+  }
+  if (drop.size === 0) return { boxes, masksDropped: 0 };
+  return {
+    boxes: boxes.map((box, i) =>
+      drop.has(i) ? { bbox: box.bbox, area: box.area } : box,
+    ),
+    masksDropped: drop.size,
+  };
+}
+
+/** Note text for the useSample fast path (served keyed or keyless). */
+export const SAMPLE_FAST_PATH_NOTE =
+  "sample sheet uses its known inventory - photograph something real for live vision";
+
+/**
+ * The bundled sample parts sheet has a known inventory — useSample:true
+ * short-circuits /api/identify before any key check, SAM call, or VLM call.
+ * Real photos (useSample absent or false) never take this path.
+ */
+export function isSampleFastPath(req: { useSample?: boolean }): boolean {
+  return req.useSample === true;
 }
 
 /** Intersection-over-union of two normalized [x, y, w, h] boxes. */
@@ -276,18 +451,29 @@ export async function segmentImage(
         signal: AbortSignal.timeout(MASK_DOWNLOAD_TIMEOUT_MS),
       });
       if (!res.ok) throw new Error(`mask download HTTP ${res.status}`);
-      return decodeMaskToBox(new Uint8Array(await res.arrayBuffer()));
+      return decodeMaskRegion(new Uint8Array(await res.arrayBuffer()));
     }),
   );
   const candidates: SamBox[] = [];
+  const maskByBox = new Map<SamBox, BinaryMask>();
   for (const result of settled) {
     if (result.status === "fulfilled" && result.value) {
-      candidates.push(result.value);
+      candidates.push(result.value.box);
+      maskByBox.set(result.value.box, result.value.mask);
     }
   }
-  const boxes = selectRegions(candidates);
+  // Rank on boxes alone, then encode compact mask PNGs only for survivors.
+  const kept = selectRegions(candidates).map((box) => {
+    const mask = maskByBox.get(box);
+    return mask ? { ...box, maskPng: encodeMaskPng(mask) } : box;
+  });
+  const { boxes, masksDropped } = capMaskPayload(kept);
+  const baseNote = `${boxes.length} regions from ${output.data.individual_masks.length} masks`;
   return {
     boxes,
-    note: `${boxes.length} regions from ${output.data.individual_masks.length} masks`,
+    note:
+      masksDropped > 0
+        ? `${baseNote}; payload cap dropped masks on ${masksDropped} regions`
+        : baseNote,
   };
 }

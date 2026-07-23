@@ -241,6 +241,129 @@ test("remove: deletes entry + jpg together; 404 on missing", async () => {
   }
 });
 
+test("setInventory: keeps unknown extra fields (e.g. maskPng), strips only photoDataUrl", async () => {
+  const { store, dir } = await makeTmpStore();
+  try {
+    const entry = await store.add({
+      photoDataUrl: JPEG_URL,
+      width: 10,
+      height: 10,
+    });
+    const withExtras = {
+      ...INVENTORY,
+      parts: [{ ...INVENTORY.parts[0], maskPng: "data:image/png;base64,AAAA" }],
+      note: "vlm pass 2",
+    };
+    const updated = await store.setInventory(entry.id, withExtras);
+    assert.equal(updated.inventory.photoDataUrl, undefined);
+    assert.equal(updated.inventory.parts[0].maskPng, "data:image/png;base64,AAAA");
+    assert.equal(updated.inventory.note, "vlm pass 2");
+
+    // Extras survive the round trip through index.json on disk.
+    const persisted = await new PhotoStore(dir).get(entry.id);
+    assert.equal(persisted.inventory.parts[0].maskPng, "data:image/png;base64,AAAA");
+    assert.equal(persisted.inventory.note, "vlm pass 2");
+    assert.equal(persisted.inventory.photoDataUrl, undefined);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("migration: legacy dir contents move to the new dir on first use", async () => {
+  const base = join(fileURLToPath(new URL("./", import.meta.url)), ".tmp");
+  await mkdir(base, { recursive: true });
+  const root = await mkdtemp(join(base, "migrate-"));
+  const legacyDir = join(root, "photos");
+  const newDir = join(root, "images", "user");
+  try {
+    // Seed a pre-unification library: index.json + one jpg.
+    const seed = new PhotoStore(legacyDir);
+    const seeded = await seed.add({
+      photoDataUrl: JPEG_URL,
+      width: 20,
+      height: 30,
+      capturedAt: new Date(2026, 6, 23, 9, 15),
+    });
+
+    const store = new PhotoStore(newDir, legacyDir);
+    const listed = await store.list();
+    assert.equal(listed.length, 1);
+    assert.equal(listed[0].id, seeded.id);
+    assert.equal(listed[0].label, "Bench 09:15");
+
+    // Files physically moved: new dir has them, legacy dir is gone.
+    assert.equal(await exists(join(newDir, "index.json")), true);
+    assert.equal(await exists(join(newDir, `${seeded.id}.jpg`)), true);
+    assert.equal(await exists(legacyDir), false);
+
+    const image = await store.readImage(seeded.id);
+    assert.deepEqual(image.buffer, JPEG_BYTES);
+
+    // Idempotent: a fresh instance with the same legacy path is a no-op.
+    const again = new PhotoStore(newDir, legacyDir);
+    const relisted = await again.list();
+    assert.deepEqual(relisted.map((p) => p.id), [seeded.id]);
+    assert.equal(await exists(join(newDir, `${seeded.id}.jpg`)), true);
+
+    // The migrated store keeps working: adds land in the new dir.
+    const added = await again.add({ photoDataUrl: PNG_URL, width: 5, height: 5 });
+    assert.equal(await exists(join(newDir, `${added.id}.jpg`)), true);
+    assert.equal(await exists(legacyDir), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("migration: destination files win over stale legacy copies", async () => {
+  const base = join(fileURLToPath(new URL("./", import.meta.url)), ".tmp");
+  await mkdir(base, { recursive: true });
+  const root = await mkdtemp(join(base, "migrate-"));
+  const legacyDir = join(root, "photos");
+  const newDir = join(root, "images", "user");
+  try {
+    // The new dir already has a live library...
+    const current = new PhotoStore(newDir);
+    const kept = await current.add({
+      photoDataUrl: PNG_URL,
+      width: 5,
+      height: 5,
+    });
+    // ...and a stale legacy dir reappears with its own index.json.
+    const stale = new PhotoStore(legacyDir);
+    await stale.add({ photoDataUrl: JPEG_URL, width: 9, height: 9 });
+
+    const store = new PhotoStore(newDir, legacyDir);
+    const listed = await store.list();
+    // The destination index survives untouched; the legacy dir is cleared.
+    assert.deepEqual(listed.map((p) => p.id), [kept.id]);
+    assert.equal(await exists(legacyDir), false);
+    const image = await store.readImage(kept.id);
+    assert.deepEqual(image.buffer, PNG_BYTES);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("migration: no legacy path or missing legacy dir is a clean no-op", async () => {
+  const base = join(fileURLToPath(new URL("./", import.meta.url)), ".tmp");
+  await mkdir(base, { recursive: true });
+  const root = await mkdtemp(join(base, "migrate-"));
+  try {
+    const noLegacyArg = new PhotoStore(join(root, "a"));
+    assert.deepEqual(await noLegacyArg.list(), []);
+    const missingLegacy = new PhotoStore(join(root, "b"), join(root, "never-existed"));
+    assert.deepEqual(await missingLegacy.list(), []);
+    const added = await missingLegacy.add({
+      photoDataUrl: JPEG_URL,
+      width: 4,
+      height: 4,
+    });
+    assert.equal(await exists(join(root, "b", `${added.id}.jpg`)), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("concurrent adds are serialized, no lost index writes", async () => {
   const { store, dir } = await makeTmpStore();
   try {

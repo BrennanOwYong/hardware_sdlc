@@ -6,8 +6,8 @@
 // commit to the build timeline.
 //
 // Practice video mode is a live mode without hardware: the <video> element
-// plays a curated real-footage clip from public/practice/ (manifest loaded
-// through lib/practice/manifest) and the same frame-capture loop posts
+// plays a curated real-footage clip from data/images/practice/ (manifest
+// loaded through lib/practice/manifest) and the same frame-capture loop posts
 // frames with step context to /api/perceive. Keyless servers answer with a
 // note and no events, so the step machine stays put - identical to the
 // camera/screen keyless behavior. References:
@@ -451,8 +451,8 @@ function AssembleInner() {
         <div className="banner warn">
           {uiMode === "practice-video" ? (
             <>
-              Practice video failed: {perceptionError}. The clip lives under
-              /practice/; Demo and Manual sim work without it.
+              Practice video failed: {perceptionError}. The clip streams from
+              /api/images/practice/; Demo and Manual sim work without it.
             </>
           ) : (
             <>

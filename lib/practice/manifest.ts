@@ -1,7 +1,8 @@
 /**
- * Practice-media manifest loader. public/practice/manifest.json lists the
- * curated real-camera workbench photos and videos (see
- * public/practice/ATTRIBUTION.md for licenses). This module fetches it
+ * Practice-media manifest loader. data/images/practice/manifest.json lists
+ * the curated real-camera workbench photos and videos (see
+ * data/images/practice/ATTRIBUTION.md for licenses); the images API streams
+ * both at /api/images/practice/<file>. This module fetches the manifest
  * client-side, zod-validates the shape, and exposes typed accessors so
  * /inventory (practice photos) and /assemble (practice video) never trust
  * the JSON blindly.
@@ -9,13 +10,13 @@
  * Runtime imports stay limited to zod so tests/practice.test.mjs can run
  * this file directly under node --test via Node 24 type stripping.
  *
- * References: docs/references-practice-modes.md
+ * References: docs/references-practice-modes.md, docs/references-storage.md
  */
 import { z } from "zod";
 
-/** One curated photo or video entry in public/practice/manifest.json. */
+/** One curated photo or video entry in data/images/practice/manifest.json. */
 export const practiceMediaItemSchema = z.object({
-  /** Basename inside public/practice/, e.g. "uno-closeup.jpg". */
+  /** Basename inside data/images/practice/, e.g. "uno-closeup.jpg". */
   file: z.string().min(1),
   /** Human-readable description of the scene. */
   title: z.string().min(1),
@@ -34,11 +35,11 @@ export const practiceManifestSchema = z.object({
 });
 export type PracticeManifest = z.infer<typeof practiceManifestSchema>;
 
-/** Public base path the Next static server exposes public/practice/ under. */
-export const PRACTICE_BASE_PATH = "/practice";
+/** Base URL the images route serves data/images/practice/ under. */
+export const PRACTICE_BASE_PATH = "/api/images/practice";
 export const PRACTICE_MANIFEST_URL = `${PRACTICE_BASE_PATH}/manifest.json`;
 
-/** URL for one manifest entry, e.g. "/practice/uno-closeup.jpg". */
+/** URL for one manifest entry, e.g. "/api/images/practice/uno-closeup.jpg". */
 export function practiceMediaUrl(item: Pick<PracticeMediaItem, "file">): string {
   return `${PRACTICE_BASE_PATH}/${item.file}`;
 }

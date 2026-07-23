@@ -32,6 +32,13 @@ export const partDetectionSchema = z.object({
   label: z.string(),
   confidence: z.number(),
   bbox: z.tuple([z.number(), z.number(), z.number(), z.number()]),
+  /**
+   * Base64 PNG (no data: prefix), white where the object is (masks builder,
+   * lib/perception/sam.ts). Declared here because zod v3 strips unknown keys:
+   * without this line the client parse (and the photo-library cache PATCH,
+   * which reuses inventorySchema) would silently drop every mask.
+   */
+  maskPng: z.string().optional(),
 });
 
 /** Mirrors Inventory from lib/types.ts, for runtime validation. */

@@ -1,13 +1,18 @@
 "use client";
 
 // Inventory: Ctrl-F for real life. Photo mode identifies a bench photo and
-// drops game-style AR pins on matches; Live mode watches the camera or a
-// shared screen and re-runs the hunt every ~2.5 s while a query is typed.
-// Photo mode also offers a "Practice photos" strip: curated real-camera
-// bench shots from public/practice/ (lib/practice/manifest) that run the
-// exact user-photo path. Media-capture shapes verified against MDN; vision
-// request shape against the Anthropic vision docs. Deep links:
-// docs/references-delta-arfind.md and docs/references-practice-modes.md.
+// lights each matched part's EXACT pixels (SAM mask via MaskOverlay; halo
+// pins remain the no-mask fallback). Live mode is snap-on-submit: aim the
+// camera or a shared screen, type the hunt, submit - Forge freezes that
+// frame with a "captured" flash, stops the camera (light off), analyzes the
+// frozen shot, and reports "Scan complete: N items found" on it
+// (FEEDBACK.md items 2, 3, 9). A rolling MediaRecorder clip from capture
+// start plus a composed results PNG auto-save to /api/live-captures
+// (FEEDBACK.md item 10). Photo mode also offers a "Practice photos" strip:
+// curated real-camera bench shots from data/images/practice/
+// (lib/practice/manifest) that run the exact user-photo path. Media/canvas
+// shapes verified against MDN: docs/references-liveux.md (this build),
+// docs/references-delta-arfind.md, docs/references-practice-modes.md.
 // "Your photos" strip: every identified user photo is saved server-side via
 // /api/photos with its identification cached, so reuse is one tap and free
 // (docs/references-photolib.md).
@@ -19,13 +24,29 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type FormEvent,
 } from "react";
-import type { ArMarker, Inventory } from "@/lib/types";
+import type { Inventory } from "@/lib/types";
 import {
   identifyErrorSchema,
   identifyResponseSchema,
 } from "@/lib/inventory/contract";
-import { markerFromBbox, markersForQuery } from "@/lib/inventory/markers";
+import { matchesQuery } from "@/lib/inventory/markers";
+import {
+  CLIP_MAX_BYTES,
+  clipContainerMime,
+  nextLivePhase,
+  pickRecorderMime,
+  resultsPngLayout,
+  scanSummary,
+  shouldDropClip,
+  stripDataUrlPrefix,
+  type ClipContainerMime,
+  type LiveCapturePayload,
+  type LiveEvent,
+  type LivePhase,
+  type MaskedPart,
+} from "@/lib/inventory/liveflow";
 import {
   loadPracticeManifest,
   practiceMediaUrl,
@@ -37,17 +58,36 @@ import {
   photoResponseSchema,
   type PhotoMeta,
 } from "@/lib/photos/contract";
-import ArMarkerLayer from "@/components/ArMarkerLayer";
+import MaskOverlay from "@/components/MaskOverlay";
 
 /** Photo mode export cap; vision docs recommend small long edges (docs/references-p1.md). */
 const MAX_EDGE = 1568;
-/** Live mode frame width; small frames keep the 2.5 s loop cheap and quick. */
+/** Live mode frozen-frame width; 1024 keeps identify fast and masks usable. */
 const LIVE_CAPTURE_WIDTH = 1024;
-const LIVE_JPEG_QUALITY = 0.7;
-const LIVE_INTERVAL_MS = 2500;
+/** Frozen shot quality: the user sees and saves this frame, so keep it crisp. */
+const LIVE_JPEG_QUALITY = 0.85;
+/** How long the "captured" flash stays on the frozen frame. */
+const FLASH_MS = 700;
 
 type InventoryMode = "photo" | "live";
 type LiveSource = "camera" | "screen";
+
+/** The still grabbed at submit time; every later step works from this. */
+interface FrozenFrame {
+  dataUrl: string;
+  w: number;
+  h: number;
+}
+
+/** One on-screen results row for the live table (grouped by label). */
+interface LiveGroup {
+  label: string;
+  partType: string;
+  quantity: number;
+  confidence: number;
+  /** True when any part in the group matched the submitted query. */
+  matched: boolean;
+}
 
 /**
  * Where the current photo came from. "user" photos (camera/file) are saved to
@@ -87,6 +127,16 @@ function loadImage(src: string): Promise<HTMLImageElement> {
     img.onload = () => resolve(img);
     img.onerror = () => reject(new Error("failed to load image"));
     img.src = src;
+  });
+}
+
+/** Recorded clip Blob -> bare base64 for the live-captures payload. */
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("failed to read the recorded clip"));
+    reader.onload = () => resolve(stripDataUrlPrefix(String(reader.result)));
+    reader.readAsDataURL(blob);
   });
 }
 
@@ -139,6 +189,10 @@ export default function InventoryPage() {
   const [editValue, setEditValue] = useState("");
   const [photoAt, setPhotoAt] = useState<Date | null>(null);
   const [showNewPhotoBanner, setShowNewPhotoBanner] = useState(false);
+  /** Fitted pixel dims of the displayed photo; MaskOverlay's coordinate space. */
+  const [photoDims, setPhotoDims] = useState<{ w: number; h: number } | null>(
+    null,
+  );
 
   // ---- Your photos (server-side library, lib/photos/store) ----
   const [myPhotos, setMyPhotos] = useState<PhotoMeta[]>([]);
@@ -172,20 +226,41 @@ export default function InventoryPage() {
     };
   }, []);
 
-  // ---- Live mode state ----
+  // ---- Live mode state (snap-on-submit; state machine in lib/inventory/liveflow) ----
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const liveStreamRef = useRef<MediaStream | null>(null);
   const liveCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const liveInFlightRef = useRef(false);
-  const liveKeylessRef = useRef(false);
-  const liveQueryRef = useRef("");
-  const [liveActive, setLiveActive] = useState(false);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const recorderMimeRef = useRef<string | null>(null);
+  const liveSourceRef = useRef<LiveSource>("camera");
+  const livePhaseRef = useRef<LivePhase>("idle");
+  const flashTimerRef = useRef<number | null>(null);
+
+  const [livePhase, setLivePhase] = useState<LivePhase>("idle");
   const [liveQuery, setLiveQuery] = useState("");
   const [liveError, setLiveError] = useState<string | null>(null);
   const [liveNote, setLiveNote] = useState<string | null>(null);
-  const [liveMarkers, setLiveMarkers] = useState<ArMarker[]>([]);
+  const [frozenFrame, setFrozenFrame] = useState<FrozenFrame | null>(null);
+  const [liveParts, setLiveParts] = useState<MaskedPart[]>([]);
+  const [liveMatchedIds, setLiveMatchedIds] = useState<Set<string>>(new Set());
+  const [liveSelectedLabel, setLiveSelectedLabel] = useState<string | null>(
+    null,
+  );
   const [liveFound, setLiveFound] = useState<number | null>(null);
-  const [scanning, setScanning] = useState(false);
+  const [analyzedQuery, setAnalyzedQuery] = useState("");
+  const [recordingClip, setRecordingClip] = useState(false);
+  const [captureFlash, setCaptureFlash] = useState(false);
+  const [flashFade, setFlashFade] = useState(false);
+  const [saveNote, setSaveNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    livePhaseRef.current = livePhase;
+  }, [livePhase]);
+
+  const advancePhase = useCallback((event: LiveEvent) => {
+    setLivePhase((p) => nextLivePhase(p, event));
+  }, []);
 
   const effectiveLabel = useCallback(
     (originalLabel: string) => renames[originalLabel] ?? originalLabel,
@@ -241,15 +316,18 @@ export default function InventoryPage() {
     return ids;
   }, [groups, visibleGroups, trimmedQuery, selectedLabel]);
 
-  /** AR pins for the photo: one marker per highlighted part. */
-  const photoMarkers = useMemo<ArMarker[]>(() => {
+  /**
+   * Highlighted parts for MaskOverlay: exact pixels when a part carries a SAM
+   * maskPng, halo pin fallback otherwise. Labels reflect local renames.
+   */
+  const highlightedParts = useMemo<MaskedPart[]>(() => {
     if (!inventory) return [];
     return inventory.parts
       .filter((p) => highlightIds.has(p.id))
-      .map((p) => markerFromBbox(p.bbox, effectiveLabel(p.label), "find"));
+      .map((p) => ({ ...p, label: effectiveLabel(p.label) }));
   }, [inventory, highlightIds, effectiveLabel]);
 
-  // Redraw the canvas: the plain photo only. Highlights are AR markers now.
+  // Redraw the canvas: the plain photo only. Highlights live in MaskOverlay.
   useEffect(() => {
     const canvas = canvasRef.current;
     const img = imgRef.current;
@@ -257,6 +335,7 @@ export default function InventoryPage() {
     const { w, h } = fitDims(img.naturalWidth, img.naturalHeight);
     canvas.width = w;
     canvas.height = h;
+    setPhotoDims({ w, h });
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.fillStyle = "#ffffff";
@@ -497,9 +576,10 @@ export default function InventoryPage() {
     setEditingLabel(null);
   }, [inventory, editingLabel, editValue]);
 
-  // ---- Live mode: capture + polling ----
+  // ---- Live mode: snap-on-submit (FEEDBACK.md items 3, 9, 10) ----
 
-  const stopLive = useCallback(() => {
+  /** Stops camera/screen tracks only; frozen frame and results stay put. */
+  const releaseStream = useCallback(() => {
     const stream = liveStreamRef.current;
     if (stream) {
       for (const track of stream.getTracks()) track.stop();
@@ -507,19 +587,77 @@ export default function InventoryPage() {
     }
     const video = videoRef.current;
     if (video && video.srcObject) video.srcObject = null;
-    liveInFlightRef.current = false;
-    setLiveActive(false);
-    setLiveMarkers([]);
-    setLiveFound(null);
-    setScanning(false);
   }, []);
+
+  /**
+   * Stops the rolling recorder and resolves with the finished clip Blob (or
+   * null when nothing was recorded). MDN: the final dataavailable fires
+   * before the stop event, so chunks are complete inside the stop handler.
+   */
+  const stopRecorder = useCallback((): Promise<Blob | null> => {
+    const rec = recorderRef.current;
+    recorderRef.current = null;
+    setRecordingClip(false);
+    const finish = (mime: string | null): Blob | null => {
+      const chunks = recordedChunksRef.current;
+      recordedChunksRef.current = [];
+      return chunks.length > 0
+        ? new Blob(chunks, { type: mime ?? "video/webm" })
+        : null;
+    };
+    if (!rec || rec.state === "inactive") {
+      return Promise.resolve(finish(recorderMimeRef.current));
+    }
+    return new Promise((resolve) => {
+      rec.addEventListener(
+        "stop",
+        () => resolve(finish(rec.mimeType || recorderMimeRef.current)),
+        { once: true },
+      );
+      try {
+        rec.stop();
+      } catch {
+        resolve(finish(recorderMimeRef.current));
+      }
+    });
+  }, []);
+
+  /** Full teardown back to idle: recorder, tracks, frozen state, results. */
+  const stopLive = useCallback(() => {
+    const rec = recorderRef.current;
+    recorderRef.current = null;
+    if (rec && rec.state !== "inactive") {
+      try {
+        rec.stop();
+      } catch {
+        // Already stopping; nothing to salvage on a teardown.
+      }
+    }
+    recordedChunksRef.current = [];
+    setRecordingClip(false);
+    releaseStream();
+    if (flashTimerRef.current !== null) {
+      window.clearTimeout(flashTimerRef.current);
+      flashTimerRef.current = null;
+    }
+    setCaptureFlash(false);
+    setLivePhase("idle");
+    livePhaseRef.current = "idle";
+    setFrozenFrame(null);
+    setLiveParts([]);
+    setLiveMatchedIds(new Set());
+    setLiveSelectedLabel(null);
+    setLiveFound(null);
+    setSaveNote(null);
+  }, [releaseStream]);
 
   const startLive = useCallback(
     async (source: LiveSource) => {
       stopLive();
       setLiveError(null);
       setLiveNote(null);
-      liveKeylessRef.current = false;
+      setSaveNote(null);
+      liveSourceRef.current = source;
       try {
         // navigator.mediaDevices is undefined off HTTPS/localhost (MDN).
         if (typeof navigator === "undefined" || !navigator.mediaDevices) {
@@ -549,9 +687,37 @@ export default function InventoryPage() {
           video.playsInline = true;
           await video.play();
         }
-        // Stop cleanly when the user ends sharing from the browser's own UI.
-        stream.getVideoTracks()[0]?.addEventListener("ended", () => stopLive());
-        setLiveActive(true);
+        // Browser-side "Stop sharing" while aiming tears down; after a snap
+        // the tracks are already ours to stop, so a late ended is ignored.
+        stream.getVideoTracks()[0]?.addEventListener("ended", () => {
+          if (livePhaseRef.current === "aim") stopLive();
+        });
+        // Rolling clip from capture start (FEEDBACK.md item 10). mimeType
+        // fallback chain per MDN isTypeSupported; no MediaRecorder (or a
+        // constructor refusal) skips the clip and keeps everything else.
+        recordedChunksRef.current = [];
+        if (typeof MediaRecorder !== "undefined") {
+          try {
+            const mime = pickRecorderMime((t) =>
+              MediaRecorder.isTypeSupported(t),
+            );
+            const rec = mime
+              ? new MediaRecorder(stream, { mimeType: mime })
+              : new MediaRecorder(stream);
+            recorderMimeRef.current = rec.mimeType || mime;
+            rec.ondataavailable = (e: BlobEvent) => {
+              if (e.data.size > 0) recordedChunksRef.current.push(e.data);
+            };
+            rec.start(1000);
+            recorderRef.current = rec;
+            setRecordingClip(true);
+          } catch {
+            recorderRef.current = null;
+            setRecordingClip(false);
+          }
+        }
+        setLivePhase("aim");
+        livePhaseRef.current = "aim";
       } catch (e) {
         stopLive();
         setLiveError(friendlyMediaError(e, source));
@@ -560,17 +726,10 @@ export default function InventoryPage() {
     [stopLive],
   );
 
-  /** One hunt: grab a ~1024px JPEG frame and ask /api/identify with the query. */
-  const liveTick = useCallback(async () => {
-    if (liveInFlightRef.current || liveKeylessRef.current) return;
-    const q = liveQueryRef.current.trim();
-    if (!q) {
-      setLiveMarkers([]);
-      setLiveFound(null);
-      return;
-    }
+  /** Grabs the current video frame as the frozen still. */
+  const grabFrame = useCallback((): FrozenFrame | null => {
     const video = videoRef.current;
-    if (!video || video.readyState < 2 || video.videoWidth === 0) return;
+    if (!video || video.readyState < 2 || video.videoWidth === 0) return null;
     let canvas = liveCanvasRef.current;
     if (!canvas) {
       canvas = document.createElement("canvas");
@@ -581,21 +740,192 @@ export default function InventoryPage() {
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    if (!ctx) return null;
     ctx.drawImage(video, 0, 0, w, h);
-    const dataUrl = canvas.toDataURL("image/jpeg", LIVE_JPEG_QUALITY);
+    return { dataUrl: canvas.toDataURL("image/jpeg", LIVE_JPEG_QUALITY), w, h };
+  }, []);
 
-    liveInFlightRef.current = true;
-    setScanning(true);
+  /**
+   * Composes the results PNG: accent header (query + timestamp), frozen frame,
+   * then label/type/confidence rows. Layout math in lib/inventory/liveflow;
+   * toDataURL shapes per MDN (docs/references-liveux.md).
+   */
+  const composeResultsPng = useCallback(
+    async (
+      frame: FrozenFrame,
+      parts: readonly MaskedPart[],
+      q: string,
+      capturedAt: Date,
+    ): Promise<string> => {
+      const img = await loadImage(frame.dataUrl);
+      const layout = resultsPngLayout(frame.w, frame.h, Math.max(1, parts.length));
+      const canvas = document.createElement("canvas");
+      canvas.width = layout.width;
+      canvas.height = layout.height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("canvas 2d context unavailable");
+      ctx.fillStyle = "#0b0f14";
+      ctx.fillRect(0, 0, layout.width, layout.height);
+      ctx.fillStyle = "#22c55e";
+      ctx.fillRect(0, 0, layout.width, layout.headerH);
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#06130a";
+      ctx.font = "600 18px system-ui, sans-serif";
+      ctx.fillText(
+        `Find: "${q}" · ${capturedAt.toLocaleString()}`,
+        layout.pad,
+        layout.headerH / 2,
+        layout.width - layout.pad * 2,
+      );
+      ctx.drawImage(img, 0, layout.frameY, layout.frameW, layout.frameH);
+      const labelX = layout.pad;
+      const typeX = Math.round(layout.width * 0.55);
+      const confX = Math.round(layout.width * 0.85);
+      let y = layout.tableY;
+      ctx.fillStyle = "#111a24";
+      ctx.fillRect(0, y, layout.width, layout.rowH);
+      ctx.fillStyle = "#8b98a5";
+      ctx.font = "600 13px system-ui, sans-serif";
+      ctx.fillText("Label", labelX, y + layout.rowH / 2);
+      ctx.fillText("Type", typeX, y + layout.rowH / 2);
+      ctx.fillText("Conf.", confX, y + layout.rowH / 2);
+      y += layout.rowH;
+      ctx.font = "400 13px system-ui, sans-serif";
+      if (parts.length === 0) {
+        ctx.fillStyle = "#8b98a5";
+        ctx.fillText("No items identified in this shot.", labelX, y + layout.rowH / 2);
+      } else {
+        for (const p of parts) {
+          ctx.strokeStyle = "#22303d";
+          ctx.beginPath();
+          ctx.moveTo(0, y + layout.rowH - 0.5);
+          ctx.lineTo(layout.width, y + layout.rowH - 0.5);
+          ctx.stroke();
+          ctx.fillStyle = "#e6edf3";
+          ctx.fillText(p.label, labelX, y + layout.rowH / 2, typeX - labelX - layout.pad);
+          ctx.fillText(p.partType, typeX, y + layout.rowH / 2, confX - typeX - layout.pad);
+          ctx.fillStyle = "#22c55e";
+          ctx.fillText(
+            `${Math.round(p.confidence * 100)}%`,
+            confX,
+            y + layout.rowH / 2,
+          );
+          y += layout.rowH;
+        }
+      }
+      return canvas.toDataURL("image/png");
+    },
+    [],
+  );
+
+  /**
+   * Fire-and-forget save of {clip?, frame, results PNG} to /api/live-captures
+   * (storage builder's route; clipMime must be the bare container and travel
+   * with clipBase64). Failures land as a muted note, never a block.
+   */
+  const saveLiveCapture = useCallback(
+    async (
+      clip: Blob | null,
+      frame: FrozenFrame,
+      parts: readonly MaskedPart[],
+      q: string,
+      capturedAt: Date,
+    ) => {
+      try {
+        let clipBase64: string | undefined;
+        let clipMime: ClipContainerMime | undefined;
+        let clipNote: string | null = null;
+        if (clip && clip.size > 0) {
+          const container = clipContainerMime(
+            clip.type || recorderMimeRef.current,
+          );
+          if (container === null) {
+            clipNote = "clip skipped: unrecognized recording format";
+          } else if (shouldDropClip(clip.size)) {
+            clipNote = `clip skipped: over ${Math.round(CLIP_MAX_BYTES / (1024 * 1024))} MB`;
+          } else {
+            clipBase64 = await blobToBase64(clip);
+            clipMime = container;
+          }
+        }
+        const resultsPngDataUrl = await composeResultsPng(
+          frame,
+          parts,
+          q,
+          capturedAt,
+        );
+        const payload: LiveCapturePayload = {
+          frameDataUrl: frame.dataUrl,
+          resultsPngDataUrl,
+          query: q,
+          capturedAt: capturedAt.toISOString(),
+          ...(clipBase64 !== undefined && clipMime !== undefined
+            ? { clipBase64, clipMime }
+            : {}),
+        };
+        const res = await fetch("/api/live-captures", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        setSaveNote(
+          clipNote ? `saved to live-view (${clipNote})` : "saved to live-view",
+        );
+      } catch (e) {
+        setSaveNote(
+          `could not save to live-view: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    },
+    [composeResultsPng],
+  );
+
+  /**
+   * The snap: freeze the frame with a "captured" flash, stop recorder and
+   * camera (light off), identify the frozen still with the query, then show
+   * "Scan complete" with exact-pixel masks / halo fallbacks on it.
+   */
+  const onLiveSubmit = useCallback(async () => {
+    if (livePhase !== "aim") return;
+    const q = liveQuery.trim().slice(0, 100);
+    if (!q) return;
+    const frame = grabFrame();
+    if (!frame) {
+      setLiveError(
+        "No video frame available yet. Give the camera a second and try again.",
+      );
+      return;
+    }
+    setLiveError(null);
+    setLiveNote(null);
+    setSaveNote(null);
+    setLiveParts([]);
+    setLiveMatchedIds(new Set());
+    setLiveSelectedLabel(null);
+    setLiveFound(null);
+    setAnalyzedQuery(q);
+    setFrozenFrame(frame);
+    advancePhase("submit"); // aim -> captured: the view visibly freezes
+    setCaptureFlash(true);
+    setFlashFade(false);
+    flashTimerRef.current = window.setTimeout(() => {
+      flashTimerRef.current = null;
+      setCaptureFlash(false);
+      advancePhase("flashed"); // captured -> analyzing (no-op once done)
+    }, FLASH_MS);
+    const clip = await stopRecorder();
+    releaseStream(); // camera light goes off: the user sees the camera is done
+    const capturedAt = new Date();
     try {
       const res = await fetch("/api/identify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          imageBase64: dataUrl,
-          imageWidth: w,
-          imageHeight: h,
-          query: q.slice(0, 100),
+          imageBase64: frame.dataUrl,
+          imageWidth: frame.w,
+          imageHeight: frame.h,
+          query: q,
         }),
       });
       const raw: unknown = await res.json();
@@ -610,48 +940,83 @@ export default function InventoryPage() {
       const parsed = identifyResponseSchema.safeParse(raw);
       if (!parsed.success) throw new Error("unexpected /api/identify response shape");
       if (parsed.data.inventory.source === "mock") {
-        // Keyless server: the mock inventory does not match the video, so no
-        // pins. Stop asking and surface the server's plain-language note.
-        liveKeylessRef.current = true;
+        // Keyless server: mock parts do not match the frozen shot, so no
+        // overlays and no save; surface the server's plain-language note.
         setLiveNote(
           parsed.data.note ??
             "Live identify is off without an API key; photo mode with the sample image still works.",
         );
-        setLiveMarkers([]);
-        setLiveFound(null);
       } else {
         setLiveNote(parsed.data.note ?? null);
-        const markers = markersForQuery(parsed.data.inventory.parts, q);
-        setLiveMarkers(markers);
-        setLiveFound(markers.length);
-        setLiveError(null);
+        const parts: MaskedPart[] = parsed.data.inventory.parts;
+        const matched = new Set(
+          parts.filter((p) => matchesQuery(p, q)).map((p) => p.id),
+        );
+        setLiveParts(parts);
+        setLiveMatchedIds(matched);
+        setLiveFound(matched.size);
+        void saveLiveCapture(clip, frame, parts, q, capturedAt);
       }
     } catch (e) {
       setLiveError(e instanceof Error ? e.message : String(e));
     } finally {
-      liveInFlightRef.current = false;
-      setScanning(false);
+      advancePhase("resolved"); // -> done
     }
+  }, [
+    livePhase,
+    liveQuery,
+    grabFrame,
+    advancePhase,
+    stopRecorder,
+    releaseStream,
+    saveLiveCapture,
+  ]);
+
+  /** Rearms live mode on the last-used source after a snap. */
+  const onResume = useCallback(() => {
+    setLiveNote(null);
+    setLiveError(null);
+    void startLive(liveSourceRef.current);
+  }, [startLive]);
+
+  /** Live results grouped by label for the on-screen table. */
+  const liveGroups = useMemo<LiveGroup[]>(() => {
+    const map = new Map<string, LiveGroup>();
+    for (const p of liveParts) {
+      const matched = liveMatchedIds.has(p.id);
+      const g = map.get(p.label);
+      if (g) {
+        g.quantity += 1;
+        g.confidence = Math.max(g.confidence, p.confidence);
+        g.matched = g.matched || matched;
+      } else {
+        map.set(p.label, {
+          label: p.label,
+          partType: p.partType,
+          quantity: 1,
+          confidence: p.confidence,
+          matched,
+        });
+      }
+    }
+    return [...map.values()];
+  }, [liveParts, liveMatchedIds]);
+
+  /** Parts lit on the frozen frame: query matches plus any tapped row. */
+  const liveOverlayParts = useMemo<MaskedPart[]>(() => {
+    if (livePhase !== "done") return [];
+    return liveParts.filter(
+      (p) =>
+        liveMatchedIds.has(p.id) ||
+        (liveSelectedLabel !== null && p.label === liveSelectedLabel),
+    );
+  }, [livePhase, liveParts, liveMatchedIds, liveSelectedLabel]);
+
+  const toggleLiveSelect = useCallback((label: string) => {
+    setLiveSelectedLabel((cur) => (cur === label ? null : label));
   }, []);
 
-  // Poll every ~2.5 s while live capture runs; the tick itself skips when the
-  // query is empty or a request is already in flight.
-  useEffect(() => {
-    if (!liveActive) return;
-    const id = window.setInterval(() => void liveTick(), LIVE_INTERVAL_MS);
-    return () => window.clearInterval(id);
-  }, [liveActive, liveTick]);
-
-  // Keep the ref in sync and clear stale pins the moment the query is emptied.
-  useEffect(() => {
-    liveQueryRef.current = liveQuery;
-    if (!liveQuery.trim()) {
-      setLiveMarkers([]);
-      setLiveFound(null);
-    }
-  }, [liveQuery]);
-
-  // Release camera/screen tracks on unmount.
+  // Release camera/screen tracks (and the recorder) on unmount.
   useEffect(() => stopLive, [stopLive]);
 
   const switchMode = useCallback(
@@ -664,6 +1029,8 @@ export default function InventoryPage() {
 
   const hasImage = imageTick > 0;
   const trimmedLiveQuery = liveQuery.trim();
+  const liveFrozen =
+    livePhase === "captured" || livePhase === "analyzing" || livePhase === "done";
 
   return (
     <>
@@ -700,6 +1067,7 @@ export default function InventoryPage() {
                 type="button"
                 className="btn btn-primary"
                 onClick={() => void startLive("camera")}
+                disabled={livePhase === "captured" || livePhase === "analyzing"}
               >
                 Point camera
               </button>
@@ -707,10 +1075,20 @@ export default function InventoryPage() {
                 type="button"
                 className="btn"
                 onClick={() => void startLive("screen")}
+                disabled={livePhase === "captured" || livePhase === "analyzing"}
               >
                 Watch my screen
               </button>
-              {liveActive ? (
+              {livePhase === "done" ? (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={onResume}
+                >
+                  Resume camera
+                </button>
+              ) : null}
+              {livePhase !== "idle" ? (
                 <button type="button" className="btn" onClick={stopLive}>
                   Stop
                 </button>
@@ -718,9 +1096,10 @@ export default function InventoryPage() {
             </div>
             <p className="muted" style={{ marginTop: "0.6rem", marginBottom: 0 }}>
               Point your camera at your bench, or share the screen where your
-              part pictures live (screen sharing needs a computer). Then type
-              what you are hunting for; Forge checks the picture every few
-              seconds and drops a pin on every match.
+              part pictures live (screen sharing needs a computer). Type what
+              you are hunting for and press Snap &amp; find: Forge takes the
+              picture for you, turns the camera off, and studies that frozen
+              shot - no need to hold steady.
             </p>
           </div>
 
@@ -728,23 +1107,39 @@ export default function InventoryPage() {
           {liveNote ? <div className="banner warn">{liveNote}</div> : null}
 
           <div className="card">
-            <input
-              type="search"
-              value={liveQuery}
-              onChange={(e) => setLiveQuery(e.target.value)}
-              placeholder='What should I find? e.g. "red wire"'
-              aria-label="What to find in the live view"
-              maxLength={100}
-              style={{
-                width: "100%",
-                padding: "0.6rem 0.9rem",
-                background: "var(--bg)",
-                border: "1px solid var(--border)",
-                borderRadius: 8,
-                color: "var(--text)",
-                fontSize: "1rem",
+            <form
+              onSubmit={(e: FormEvent<HTMLFormElement>) => {
+                e.preventDefault();
+                void onLiveSubmit();
               }}
-            />
+              style={{ display: "flex", gap: "0.5rem" }}
+            >
+              <input
+                type="search"
+                value={liveQuery}
+                onChange={(e) => setLiveQuery(e.target.value)}
+                placeholder='What should I find? e.g. "red wire"'
+                aria-label="What to find in the live view"
+                maxLength={100}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  padding: "0.6rem 0.9rem",
+                  background: "var(--bg)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 8,
+                  color: "var(--text)",
+                  fontSize: "1rem",
+                }}
+              />
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={livePhase !== "aim" || !trimmedLiveQuery}
+              >
+                Snap &amp; find
+              </button>
+            </form>
             <div
               style={{
                 display: "flex",
@@ -754,21 +1149,31 @@ export default function InventoryPage() {
                 flexWrap: "wrap",
               }}
             >
-              {scanning ? (
+              {livePhase === "aim" ? (
+                <>
+                  <span className="badge" style={{ color: "var(--accent)" }}>
+                    camera live{recordingClip ? " · recording" : ""}
+                  </span>
+                  <span className="muted" style={{ fontSize: "0.85rem" }}>
+                    {trimmedLiveQuery
+                      ? "Press Snap & find (or Enter) to take the picture."
+                      : "Type what you are hunting for, then press Snap & find."}
+                  </span>
+                </>
+              ) : null}
+              {livePhase === "captured" || livePhase === "analyzing" ? (
                 <span className="badge" style={{ color: "var(--accent)" }}>
-                  scanning…
-                </span>
-              ) : liveActive && trimmedLiveQuery ? (
-                <span className="badge">watching</span>
-              ) : null}
-              {liveFound !== null ? (
-                <span className="badge">
-                  found {liveFound}
+                  analyzing your shot…
                 </span>
               ) : null}
-              {liveActive && !trimmedLiveQuery ? (
-                <span className="muted" style={{ fontSize: "0.85rem" }}>
-                  Type something above to start the hunt.
+              {livePhase === "done" && liveFound !== null ? (
+                <span className="badge" style={{ color: "var(--accent)" }}>
+                  {scanSummary(liveFound)}
+                </span>
+              ) : null}
+              {saveNote ? (
+                <span className="muted" style={{ fontSize: "0.8rem" }}>
+                  {saveNote}
                 </span>
               ) : null}
             </div>
@@ -782,21 +1187,190 @@ export default function InventoryPage() {
                 playsInline
                 style={{
                   width: "100%",
-                  display: "block",
+                  display: liveFrozen ? "none" : "block",
                   borderRadius: 8,
                   background: "#000",
-                  minHeight: liveActive ? undefined : 180,
+                  minHeight: livePhase === "aim" ? undefined : 180,
                 }}
               />
-              <ArMarkerLayer markers={liveMarkers} visible={liveActive} />
+              {frozenFrame && liveFrozen ? (
+                <>
+                  {/* eslint-disable-next-line @next/next/no-img-element -- the frozen shot is an in-memory data URL */}
+                  <img
+                    src={frozenFrame.dataUrl}
+                    alt={`Frozen shot being searched for "${analyzedQuery}"`}
+                    style={{
+                      width: "100%",
+                      display: "block",
+                      borderRadius: 8,
+                      background: "#000",
+                    }}
+                  />
+                  <MaskOverlay
+                    parts={liveOverlayParts}
+                    width={frozenFrame.w}
+                    height={frozenFrame.h}
+                    visible={livePhase === "done"}
+                  />
+                  {livePhase === "captured" || livePhase === "analyzing" ? (
+                    <span
+                      style={{
+                        position: "absolute",
+                        bottom: 12,
+                        left: "50%",
+                        transform: "translateX(-50%)",
+                        background: "rgba(11, 15, 20, 0.85)",
+                        border: "1px solid var(--border)",
+                        color: "var(--text)",
+                        padding: "0.25rem 0.9rem",
+                        borderRadius: 999,
+                        fontSize: "0.85rem",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      analyzing your shot…
+                    </span>
+                  ) : null}
+                  {captureFlash ? (
+                    <>
+                      <div
+                        aria-hidden="true"
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          borderRadius: 8,
+                          background: "#fff",
+                          opacity: flashFade ? 0 : 0.85,
+                          transition: "opacity 0.6s ease-out",
+                          pointerEvents: "none",
+                        }}
+                      />
+                      <span
+                        style={{
+                          position: "absolute",
+                          top: 12,
+                          left: "50%",
+                          transform: "translateX(-50%)",
+                          background: "var(--accent)",
+                          color: "#06130a",
+                          fontWeight: 600,
+                          padding: "0.25rem 0.9rem",
+                          borderRadius: 999,
+                          fontSize: "0.85rem",
+                        }}
+                      >
+                        captured
+                      </span>
+                    </>
+                  ) : null}
+                </>
+              ) : null}
             </div>
-            {!liveActive ? (
+            {livePhase === "idle" ? (
               <p className="muted" style={{ margin: "0.6rem 0 0" }}>
                 Nothing playing yet. Tap Point camera or Watch my screen to
                 start; the browser will ask for permission first.
               </p>
             ) : null}
+            {liveFrozen ? (
+              <p className="muted" style={{ margin: "0.6rem 0 0", fontSize: "0.85rem" }}>
+                Camera stopped - the light is off and this frozen shot is what
+                Forge is reading. Resume camera rearms it.
+              </p>
+            ) : null}
           </div>
+
+          {livePhase === "done" && liveGroups.length > 0 ? (
+            <>
+              <div className="card" style={{ padding: 0, overflowX: "auto" }}>
+                <table
+                  style={{
+                    width: "100%",
+                    borderCollapse: "collapse",
+                    fontSize: "0.9rem",
+                  }}
+                >
+                  <thead>
+                    <tr>
+                      {["Type", "Label", "Conf.", "Qty"].map((head) => (
+                        <th
+                          key={head}
+                          style={{
+                            textAlign: "left",
+                            padding: "0.55rem 0.75rem",
+                            borderBottom: "1px solid var(--border)",
+                            color: "var(--muted)",
+                            fontWeight: 600,
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {head}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {liveGroups.map((g) => {
+                      const selected = liveSelectedLabel === g.label;
+                      return (
+                        <tr
+                          key={g.label}
+                          onClick={() => toggleLiveSelect(g.label)}
+                          style={{
+                            cursor: "pointer",
+                            background: selected
+                              ? "rgba(34, 197, 94, 0.2)"
+                              : g.matched
+                                ? "rgba(34, 197, 94, 0.1)"
+                                : "transparent",
+                          }}
+                        >
+                          <td
+                            style={{
+                              padding: "0.55rem 0.75rem",
+                              borderBottom: "1px solid var(--border)",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            <span className="badge">{g.partType}</span>
+                          </td>
+                          <td
+                            style={{
+                              padding: "0.55rem 0.75rem",
+                              borderBottom: "1px solid var(--border)",
+                            }}
+                          >
+                            {g.label}
+                          </td>
+                          <td
+                            style={{
+                              padding: "0.55rem 0.75rem",
+                              borderBottom: "1px solid var(--border)",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {Math.round(g.confidence * 100)}%
+                          </td>
+                          <td
+                            style={{
+                              padding: "0.55rem 0.75rem",
+                              borderBottom: "1px solid var(--border)",
+                            }}
+                          >
+                            {g.quantity}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="muted" style={{ fontSize: "0.85rem" }}>
+                Rows matching “{analyzedQuery}” are lit on the frozen shot
+                above; tap any other row to light that part too.
+              </p>
+            </>
+          ) : null}
         </>
       ) : (
         <>
@@ -844,12 +1418,12 @@ export default function InventoryPage() {
             ) : null}
             <p className="muted" style={{ marginTop: "0.6rem", marginBottom: 0 }}>
               Snap your parts spread (or a screen with part cutouts) and Forge
-              names everything it sees. Then search below to drop a pin on a
-              part.
+              names everything it sees. Then search below to light a part up
+              in the photo.
             </p>
           </div>
 
-          {/* Your photos: server-side library (data/photos via /api/photos).
+          {/* Your photos: server-side library (data/images/user via /api/photos).
               A tap reuses the stored photo; a cached identification renders
               instantly with no identify call. */}
           <div className="card">
@@ -953,7 +1527,7 @@ export default function InventoryPage() {
 
           {/* Practice photos: curated real-camera bench shots. A click runs
               the exact user-photo path (startWithImage → new-photo banner →
-              identify → AR pins → search). */}
+              identify → exact-pixel highlights → search). */}
           {practicePhotos.length > 0 ? (
             <div className="card">
               <h2 style={{ fontSize: "0.95rem", marginTop: 0 }}>
@@ -998,7 +1572,7 @@ export default function InventoryPage() {
                         overflow: "hidden",
                       }}
                     >
-                      {/* eslint-disable-next-line @next/next/no-img-element -- thumbnails come straight from public/practice/ */}
+                      {/* eslint-disable-next-line @next/next/no-img-element -- thumbnails stream from /api/images/practice/ */}
                       <img
                         src={practiceMediaUrl(p)}
                         alt={p.title}
@@ -1093,7 +1667,11 @@ export default function InventoryPage() {
                     background: "#fff",
                   }}
                 />
-                <ArMarkerLayer markers={photoMarkers} />
+                <MaskOverlay
+                  parts={highlightedParts}
+                  width={photoDims?.w ?? 0}
+                  height={photoDims?.h ?? 0}
+                />
               </div>
             </div>
           ) : null}
@@ -1120,7 +1698,7 @@ export default function InventoryPage() {
                 {trimmedQuery ? (
                   <p className="muted" style={{ margin: "0.5rem 0 0" }}>
                     {highlightIds.size} match{highlightIds.size === 1 ? "" : "es"}{" "}
-                    pinned on the photo above.
+                    lit on the photo above.
                   </p>
                 ) : null}
               </div>
@@ -1267,8 +1845,9 @@ export default function InventoryPage() {
                 </table>
               </div>
               <p className="muted" style={{ fontSize: "0.85rem" }}>
-                Tap a row to drop a pin on that part in the photo. Rename fixes
-                a wrong label locally (two taps: Rename, then Enter).
+                Tap a row to light that part up in the photo (exact pixels when
+                a mask exists, a pin otherwise). Rename fixes a wrong label
+                locally (two taps: Rename, then Enter).
               </p>
             </>
           ) : !hasImage ? (

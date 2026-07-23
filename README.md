@@ -37,9 +37,9 @@ The assemble page has five perception modes; the table shows what each needs.
 | Manual sim | You click "Tip on correct target" / "Seat it" / "Misplace it" buttons; each click injects a perception event | No | No | Wizard-of-oz mode. Works on any device. |
 | Live camera | `getUserMedia` frames -> `POST /api/perceive` -> Claude vision verdict | Yes (keyless returns empty events + a note) | Phone/laptop camera; HTTPS or localhost | Phones require HTTPS: on plain HTTP `navigator.mediaDevices` is undefined. Use a TLS tunnel (ngrok/cloudflared) for on-phone demos. |
 | Live screen | `getDisplayMedia` screen capture -> `POST /api/perceive` | Yes (keyless returns empty events + a note) | Desktop browser | Screen capture is desktop-only (no mainstream mobile support) and must start from a button click. |
-| Practice video | Bundled real wiring footage (`public/practice/*.mp4`) looped through a `<video>` element -> the same 1 s frame loop -> `POST /api/perceive` | Yes (keyless returns empty events + a note) | No | Works with zero hardware and no camera. See the Practice data section. |
+| Practice video | Bundled real wiring footage (`data/images/practice/*.mp4`, served via `/api/images/practice/`) looped through a `<video>` element -> the same 1 s frame loop -> `POST /api/perceive` | Yes (keyless returns empty events + a note) | No | Works with zero hardware and no camera. See the Practice data section. |
 
-The inventory page (`/inventory`) works keyless too: without `ANTHROPIC_API_KEY` the identify route returns the deterministic mock inventory that matches `public/sample-parts.svg`, with a `note` explaining the degradation. Codegen is deterministic (template) for the canned intents and only uses the key for free-form tweak intents.
+The inventory page (`/inventory`) works keyless too: without `ANTHROPIC_API_KEY` the identify route returns the deterministic mock inventory that matches `public/sample-parts.svg`, with a `note` explaining the degradation. The bundled sample takes a fast path in every configuration: keyed or keyless, "Use sample parts image" returns its known inventory instantly without any vision call, with the note "sample sheet uses its known inventory - photograph something real for live vision". Codegen is deterministic (template) for the canned intents and only uses the key for free-form tweak intents.
 
 ## Live Ctrl-F (inventory)
 
@@ -50,9 +50,17 @@ The inventory page (`/inventory`) works keyless too: without `ANTHROPIC_API_KEY`
 
 Keyless behavior: live mode detects the mock response, shows the degradation note, and stops polling until you start capture again. Screen watching is desktop-only; the camera needs HTTPS or localhost, same as `/assemble`.
 
-## Photo library (inventory)
+## Unified images folder (`data/images/`)
 
-Every identified user photo is saved to a "Your photos" strip on `/inventory`. The bytes live on disk under `data/photos/` (one JPEG per photo plus `index.json`), streamed through `GET /api/photos/[id]/file` rather than `public/` (production builds snapshot `public/` at build time, so runtime writes there would 404). The library keeps the newest 50 photos; adding the 51st evicts the oldest, including its file on disk. Each photo stores its latest identification, so tapping a thumbnail restores the photo and its parts list from cache with no new vision call; re-identifying refreshes the cache. The delete button on a thumbnail removes both the index entry and the file. Practice and sample photos never enter the library.
+All runtime and bundled media share one root, `data/images/`, streamed through `GET /api/images/<subdir>/<file>` (extension allowlist, path-traversal checks, immutable caching for media, single-Range 206 responses so Safari and iOS play video). Production builds snapshot `public/` at build time, so runtime files must stream from `data/`; unifying practice media there too gives one folder and one serving mechanism.
+
+- `data/images/user/` - the photo library behind the "Your photos" strip on `/inventory`: one JPEG per photo plus `index.json`. The library keeps the newest 50 photos; adding the 51st evicts the oldest, including its file. Each photo stores its latest identification, so tapping a thumbnail restores the photo and its parts list from cache with no new vision call; re-identifying refreshes the cache. The delete button removes both the index entry and the file. Practice and sample photos never enter the library. Photos saved under the legacy `data/photos/` location migrate here automatically on the first `/api/photos` call after upgrade.
+- `data/images/practice/` - the bundled practice photos and wiring clips, with `manifest.json` and `ATTRIBUTION.md` (see the Practice data section).
+- `data/images/live-view/` - artifacts auto-saved from live Ctrl-F runs (next paragraph).
+
+### Live-view artifacts
+
+Submitting a live Ctrl-F search freezes the frame (snap on submit) and auto-saves the run through `POST /api/live-captures` into `data/images/live-view/`: a recorded clip that ends at the submit moment (webm or mp4; skipped when the browser lacks `MediaRecorder` or the clip exceeds 30 MB), the frozen frame JPEG, a results PNG styled like the photo-mode parts table, and a metadata json, all sharing one id. `GET /api/live-captures` lists saved captures newest-first. Keyless runs save nothing: mock parts would not describe the real frozen frame.
 
 ## Bench and the pairing wizard (`/bench`)
 
@@ -98,8 +106,8 @@ Live assembly checking ships at rung 1 of a three-rung ladder (details and doc l
 Forge ships genuine (non-AI-generated) Arduino media so every feature has real practice input without any hardware:
 
 - **What:** 8 photos (parts spreads, mid-build breadboards, an Uno close-up, an LCD build) and 2 wiring-footage clips, all real-camera stock from Wikimedia Commons and Pexels.
-- **Where:** `public/practice/`, indexed by `public/practice/manifest.json` (validated by the zod schema in `lib/practice/manifest.ts`). `/inventory` photo mode shows a "Practice photos" card of clickable thumbnails that feed the normal identify path (banner, AR pins, search); `/assemble` has a **Practice video** mode that loops a clip through the same live perception pipeline.
-- **Licensing:** every file's author, license (CC BY / CC BY-SA / Pexels License), and source link live in `public/practice/ATTRIBUTION.md`; the app shows the credit line under each photo and clip.
+- **Where:** `data/images/practice/`, indexed by `manifest.json` there (validated by the zod schema in `lib/practice/manifest.ts`) and served through `/api/images/practice/`. `/inventory` photo mode shows a "Practice photos" card of clickable thumbnails that feed the normal identify path (banner, AR pins, search); `/assemble` has a **Practice video** mode that loops a clip through the same live perception pipeline.
+- **Licensing:** every file's author, license (CC BY / CC BY-SA / Pexels License), and source link live in `data/images/practice/ATTRIBUTION.md`; the app shows the credit line under each photo and clip.
 - **SAM:** set `REPLICATE_API_TOKEN` (with `ANTHROPIC_API_KEY`) to have `/api/identify` segment practice photos with Meta SAM 2 before labeling; see Configuration above.
 
 Keyless, both surfaces degrade to the same mock-plus-note behavior as user-supplied media; a missing or malformed manifest collapses to a muted note, never a crash.
@@ -195,7 +203,7 @@ Full notes and locally probed JSON shapes: `docs/references-delta-bench.md` (ver
 
 ### Practice modes (`lib/practice/manifest.ts`, `hooks/usePerception.ts` source `"file"`, `/inventory`, `/assemble`)
 
-Full notes: `docs/references-practice-modes.md` (verified via WebFetch 2026-07-24). Media licensing: `public/practice/ATTRIBUTION.md`.
+Full notes: `docs/references-practice-modes.md` (verified via WebFetch 2026-07-24). Media licensing: `data/images/practice/ATTRIBUTION.md`.
 
 - `HTMLMediaElement.play()` (Promise-returning; `NotAllowedError` / `NotSupportedError` rejections surfaced as the hook's error string): https://developer.mozilla.org/en-US/docs/Web/API/HTMLMediaElement/play
 - Autoplay guide (muted video + user-gesture start, why the clip plays without prompts): https://developer.mozilla.org/en-US/docs/Web/Media/Guides/Autoplay

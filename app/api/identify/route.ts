@@ -9,6 +9,8 @@ import type { Inventory, PartDetection } from "@/lib/types";
 import { buildMockInventory } from "@/lib/inventory/mock";
 import {
   chooseIdentifyMode,
+  isSampleFastPath,
+  SAMPLE_FAST_PATH_NOTE,
   segmentImage,
   type SamBox,
 } from "@/lib/perception/sam";
@@ -235,12 +237,16 @@ function partsFromRegionLabels(
     if (label.region < 1 || label.region > boxes.length) continue;
     if (seen.has(label.region)) continue;
     seen.add(label.region);
+    const box = boxes[label.region - 1];
     parts.push({
       id: `p${parts.length + 1}`,
       partType: label.partType,
       label: label.label,
       confidence: clamp01(label.confidence),
-      bbox: boxes[label.region - 1].bbox,
+      bbox: box.bbox,
+      // Each part carries its region's compact mask when the payload cap
+      // kept it; the client halo-falls-back on parts without one.
+      ...(box.maskPng !== undefined ? { maskPng: box.maskPng } : {}),
     });
   }
   return parts;
@@ -265,9 +271,18 @@ export async function POST(
       { status: 400 },
     );
   }
-  const { imageBase64, mediaType, useSample, imageWidth, imageHeight } =
-    parsed.data;
+  const { imageBase64, mediaType, imageWidth, imageHeight } = parsed.data;
   const query = parsed.data.query?.trim() || undefined;
+
+  // Sample fast-path: the bundled parts sheet has a known inventory, so
+  // useSample:true answers instantly — keyed or keyless, before any SAM or
+  // VLM call. Real photos (useSample absent/false) never take this path.
+  if (isSampleFastPath(parsed.data)) {
+    return NextResponse.json({
+      inventory: buildMockInventory(),
+      note: SAMPLE_FAST_PATH_NOTE,
+    });
+  }
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -279,9 +294,7 @@ export async function POST(
     }
     return NextResponse.json({
       inventory: buildMockInventory(),
-      note: useSample
-        ? "ANTHROPIC_API_KEY is not set — returned the deterministic mock inventory matched to the sample parts sheet."
-        : "ANTHROPIC_API_KEY is not set — returned the deterministic mock inventory (it matches the sample parts sheet, not your photo). Set the key in .env.local for live vision.",
+      note: "ANTHROPIC_API_KEY is not set — returned the deterministic mock inventory (it matches the sample parts sheet, not your photo). Set the key in .env.local for live vision.",
     });
   }
 
@@ -327,9 +340,12 @@ export async function POST(
             capturedAt: new Date().toISOString(),
             source: "vlm",
           };
+          const maskedCount = parts.filter(
+            (p) => p.maskPng !== undefined,
+          ).length;
           return NextResponse.json({
             inventory,
-            note: `sam+vlm: ${seg.boxes.length} regions, ${parts.length} labeled`,
+            note: `sam+vlm: ${seg.boxes.length} regions, ${parts.length} labeled, masks on ${maskedCount} parts`,
           });
         }
         samNote =

@@ -1,5 +1,5 @@
 export type TargetRef = string; // "UNO:D2" | "BB:12:e" | "BB:RAIL:GND" ...
-export interface PartDetection { id: string; partType: string; label: string; confidence: number; bbox: [number, number, number, number]; } // normalized x,y,w,h in 0..1
+export interface PartDetection { id: string; partType: string; label: string; confidence: number; bbox: [number, number, number, number]; maskPng?: string; } // bbox normalized x,y,w,h in 0..1; maskPng = base64 PNG (no data: prefix), white where the object is, transparent elsewhere
 export interface Inventory { parts: PartDetection[]; photoDataUrl?: string; capturedAt: string; source: 'mock' | 'vlm'; }
 export interface NetlistEdge { id: string; kind: 'wire' | 'component'; part?: string; value?: string; from: TargetRef; to: TargetRef; }
 export interface Netlist { edges: NetlistEdge[]; }

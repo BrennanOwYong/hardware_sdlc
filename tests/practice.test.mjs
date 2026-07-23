@@ -43,9 +43,9 @@ test("practiceManifestSchema accepts a valid fixture", () => {
   assert.equal(parsed.data.videos[0].file, "wiring-hands-1.mp4");
 });
 
-test("the shipped public/practice/manifest.json passes the schema", async () => {
+test("the shipped data/images/practice/manifest.json passes the schema", async () => {
   const path = fileURLToPath(
-    new URL("../public/practice/manifest.json", import.meta.url),
+    new URL("../data/images/practice/manifest.json", import.meta.url),
   );
   const raw = JSON.parse(await readFile(path, "utf8"));
   const parsed = practiceManifestSchema.safeParse(raw);
@@ -94,8 +94,11 @@ test("practiceManifestSchema rejects malformed top-level shapes", () => {
   );
 });
 
-test("practiceMediaUrl builds the public path", () => {
-  assert.equal(practiceMediaUrl({ file: "uno-closeup.jpg" }), "/practice/uno-closeup.jpg");
+test("practiceMediaUrl builds the images-API path", () => {
+  assert.equal(
+    practiceMediaUrl({ file: "uno-closeup.jpg" }),
+    "/api/images/practice/uno-closeup.jpg",
+  );
 });
 
 test("loadPracticeManifest returns the typed manifest via the injected fetch", async () => {

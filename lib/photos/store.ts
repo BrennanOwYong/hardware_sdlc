@@ -1,12 +1,23 @@
 // Photo library: JSON-index + JPEG-file store. Server-only (node builtins).
 // Every write funnels through an in-process promise queue so concurrent API
-// calls cannot interleave read-modify-write cycles on data/photos/index.json
-// (same pattern as lib/vcs/store.ts). Image bytes live at data/photos/<id>.jpg
-// and are streamed by app/api/photos/[id]/file — never from public/, which is
-// snapshotted at build time in production. Docs: docs/references-photolib.md.
+// calls cannot interleave read-modify-write cycles on the index.json (same
+// pattern as lib/vcs/store.ts). Image bytes live in the unified storage root
+// at data/images/user/<id>.jpg and are streamed by app/api/photos/[id]/file —
+// never from public/, which is snapshotted at build time in production. The
+// pre-unification location data/photos/ is migrated across once, on first
+// store use. Docs: docs/references-photolib.md, docs/references-storage.md.
 
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  copyFile,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import type { Inventory, PartDetection } from "../types";
 
@@ -154,12 +165,19 @@ export class PhotoStore {
 
   private readonly indexPath: string;
 
+  /** Pre-unification directory (data/photos); migrated across on first use. */
+  private readonly legacyDirPath: string | undefined;
+
+  /** One migration attempt per instance; the work itself is idempotent. */
+  private migrationAttempted = false;
+
   /** Serializes every operation; each link swallows the previous rejection. */
   private queue: Promise<unknown> = Promise.resolve();
 
-  constructor(dirPath: string) {
+  constructor(dirPath: string, legacyDirPath?: string) {
     this.dirPath = dirPath;
     this.indexPath = join(dirPath, "index.json");
+    this.legacyDirPath = legacyDirPath;
   }
 
   private enqueue<T>(fn: () => Promise<T>): Promise<T> {
@@ -175,8 +193,55 @@ export class PhotoStore {
     return join(this.dirPath, `${id}.jpg`);
   }
 
+  /**
+   * One-time move of a pre-unification library (data/photos/*) into the
+   * unified root (data/images/user/). Runs inside the queue before the
+   * first index read. Idempotent: files already present at the destination
+   * win (a later run must never clobber newer data), moved sources are
+   * removed, and once the legacy directory is gone every later call is a
+   * cheap ENOENT. Failures are swallowed — the store keeps working on the
+   * new directory and the untouched legacy files survive for a retry after
+   * a restart.
+   */
+  private async migrateLegacyDir(): Promise<void> {
+    if (this.migrationAttempted || !this.legacyDirPath) return;
+    this.migrationAttempted = true;
+    let names: string[];
+    try {
+      names = await readdir(this.legacyDirPath);
+    } catch {
+      return; // No legacy directory: nothing to migrate.
+    }
+    try {
+      await mkdir(this.dirPath, { recursive: true });
+      for (const name of names) {
+        const src = join(this.legacyDirPath, name);
+        const dest = join(this.dirPath, name);
+        const destExists = await access(dest).then(
+          () => true,
+          () => false,
+        );
+        if (destExists) {
+          await rm(src, { force: true });
+          continue;
+        }
+        try {
+          await rename(src, dest);
+        } catch {
+          // Cross-device fallback.
+          await copyFile(src, dest);
+          await rm(src, { force: true });
+        }
+      }
+      await rm(this.legacyDirPath, { recursive: true, force: true });
+    } catch {
+      // Leave whatever remains in place; a later restart retries.
+    }
+  }
+
   /** Reads the index; a missing or unparseable file means an empty library. */
   private async load(): Promise<IndexFile> {
+    await this.migrateLegacyDir();
     try {
       const raw = await readFile(this.indexPath, "utf8");
       const parsed: unknown = JSON.parse(raw);
@@ -236,9 +301,11 @@ export class PhotoStore {
   }
 
   /**
-   * Caches an identification on a photo. The inventory's own photoDataUrl is
-   * dropped: the jpg on disk is the image, and duplicating megabytes of
-   * base64 into index.json would bloat every index read.
+   * Caches an identification on a photo. Only the inventory's own
+   * photoDataUrl is dropped: the jpg on disk is the image, and duplicating
+   * megabytes of base64 into index.json would bloat every index read. Every
+   * other field — including additions like per-part maskPng — passes
+   * through untouched.
    */
   setInventory(id: string, inventory: Inventory): Promise<PhotoEntry> {
     return this.enqueue(async () => {
@@ -247,11 +314,8 @@ export class PhotoStore {
       if (!entry) {
         throw new PhotoError(`photo ${id} not found`, 404);
       }
-      entry.inventory = {
-        parts: inventory.parts,
-        capturedAt: inventory.capturedAt,
-        source: inventory.source,
-      };
+      const { photoDataUrl: _photoDataUrl, ...rest } = inventory;
+      entry.inventory = rest;
       await this.save(file);
       return entry;
     });
@@ -298,7 +362,10 @@ let defaultStore: PhotoStore | undefined;
 
 export function getPhotoStore(): PhotoStore {
   if (!defaultStore) {
-    defaultStore = new PhotoStore(join(process.cwd(), "data", "photos"));
+    defaultStore = new PhotoStore(
+      join(process.cwd(), "data", "images", "user"),
+      join(process.cwd(), "data", "photos"),
+    );
   }
   return defaultStore;
 }
