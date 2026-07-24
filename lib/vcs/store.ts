@@ -6,7 +6,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { BuildCommit, Netlist, NetlistEdge } from "../types";
+import type { BuildCommit, JournalEntry, Netlist, NetlistEdge } from "../types";
 
 interface StoreFile {
   commits: BuildCommit[];
@@ -19,6 +19,8 @@ export interface CreateCommitInput {
   photoDataUrl?: string;
   /** Defaults to the head of branch "main" when omitted. */
   parent?: string;
+  /** Build-journal entries drained from data/journal/pending.json. */
+  journal?: JournalEntry[];
 }
 
 export class VcsError extends Error {
@@ -57,6 +59,26 @@ function isNetlist(v: unknown): v is Netlist {
   return isRecord(v) && Array.isArray(v.edges) && v.edges.every(isEdge);
 }
 
+function optionalString(v: unknown): v is string | undefined {
+  return v === undefined || typeof v === "string";
+}
+
+function isJournalEntry(v: unknown): v is JournalEntry {
+  if (!isRecord(v)) return false;
+  return (
+    typeof v.id === "string" &&
+    typeof v.at === "string" &&
+    (v.kind === "coach" || v.kind === "flash") &&
+    typeof v.summary === "string" &&
+    optionalString(v.detail) &&
+    optionalString(v.framePath) &&
+    optionalString(v.goal) &&
+    optionalString(v.attempt) &&
+    optionalString(v.verdict) &&
+    optionalString(v.firmwareHash)
+  );
+}
+
 function isCommit(v: unknown): v is BuildCommit {
   if (!isRecord(v)) return false;
   const firmware = v.firmware;
@@ -70,7 +92,10 @@ function isCommit(v: unknown): v is BuildCommit {
     isNetlist(v.netlist) &&
     isRecord(firmware) &&
     typeof firmware.code === "string" &&
-    typeof firmware.hash === "string"
+    typeof firmware.hash === "string" &&
+    // Pre-journal commits carry no journal field and stay valid.
+    (v.journal === undefined ||
+      (Array.isArray(v.journal) && v.journal.every(isJournalEntry)))
   );
 }
 
@@ -184,6 +209,9 @@ export class CommitStore {
         netlist: input.netlist,
         firmware: input.firmware,
         ...(input.photoDataUrl !== undefined ? { photoDataUrl: input.photoDataUrl } : {}),
+        ...(input.journal !== undefined && input.journal.length > 0
+          ? { journal: input.journal }
+          : {}),
       };
       file.commits.push(commit);
       await this.save(file);

@@ -8,6 +8,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import type { FlashResult } from "@/lib/types";
 import { firmwareHash } from "@/lib/vcs/store";
+import { getJournalStore } from "@/lib/journal/store";
 import { GUIDANCE, pickGuidance } from "@/lib/bench/guidance";
 import { cleanupSketch, compileSketch, uploadSketch } from "@/lib/bench/cli";
 import { pickTarget, refreshBench } from "@/lib/bench/registry";
@@ -23,6 +24,23 @@ const flashRequestSchema = z.object({
 
 function fail(stage: FlashResult["stage"], output: string, guidance: string): FlashResult {
   return { ok: false, stage, output, guidance };
+}
+
+/**
+ * Records a successful compile/flash in the build journal (FEEDBACK 13); the
+ * entry attaches to the next commit. A journal write failure never blocks
+ * the flash response — the firmware already reached the board.
+ */
+async function journalFlash(summary: string, hash: string): Promise<void> {
+  try {
+    await getJournalStore().appendPending({
+      kind: "flash",
+      summary,
+      firmwareHash: hash,
+    });
+  } catch {
+    // Journal is best-effort here; the FlashResult is the source of truth.
+  }
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
@@ -61,6 +79,7 @@ export async function POST(req: Request): Promise<NextResponse> {
     const hash = firmwareHash(code);
 
     if (!target || target.port === null) {
+      await journalFlash(`compiled ${hash}`, hash);
       return NextResponse.json(compileOnlyResult(`[compile]\n${compiled.output}`, hash));
     }
 
@@ -72,6 +91,7 @@ export async function POST(req: Request): Promise<NextResponse> {
       );
     }
 
+    await journalFlash(`flashed ${hash} to ${target.boardName}`, hash);
     return NextResponse.json({
       ok: true,
       stage: "done",

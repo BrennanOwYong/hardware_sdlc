@@ -5,14 +5,31 @@
 // D0-D13 / GND / 5V pins. Geometry comes from lib/assembly/circuits.ts;
 // refToXY is re-exported here so overlay consumers can share the mapping.
 //
-// Visual states:
+// Two modes, discriminated by the props shape:
+//
+// Step mode (guided assembly, /assemble) — unchanged behavior:
 //   - pulsing ring on the active step targets (SMIL <animate>)
 //   - dashed ghost line from -> to for the active step
 //   - solid green line + filled endpoints for seated edges
 //   - red rings + red dashed line while the current step is in error
+//
+// Netlist mode (commit-state diagram, FEEDBACK 14, /timeline):
+//   - every edge drawn at its exact holes (refToXY is hole-precise by
+//     construction): wires as lines, components as glyphs
+//   - optional firmware badge on the Uno silhouette (short hash + pins used)
+//   - with diffAgainst: edges only in netlist green, edges only in
+//     diffAgainst red dashed, shared edges neutral
+//   Edge classification and coordinates come from lib/diagram/selectors.
 
 import type { ReactElement } from "react";
-import type { AssemblyStep, StepPhase, TargetRef } from "@/lib/types";
+import type {
+  AssemblyStep,
+  Netlist,
+  NetlistEdge,
+  StepPhase,
+  TargetRef,
+} from "@/lib/types";
+import { drawableEdges, type DrawableEdge } from "@/lib/diagram/selectors";
 import {
   BB_COL_Y,
   BB_RAIL_GND_Y,
@@ -41,12 +58,27 @@ const HOLE = "#0b0f14";
 const PANEL = "#131a22";
 const BORDER = "#22303d";
 
-export interface BoardViewProps {
+export interface BoardViewStepProps {
   steps: AssemblyStep[];
   currentIndex: number;
   phase: StepPhase;
   seatedIds: string[];
 }
+
+export interface BoardViewFirmwareBadge {
+  hash: string;
+  pinsUsed: string[];
+}
+
+export interface BoardViewNetlistProps {
+  netlist: Netlist;
+  /** When set, renders the diff: netlist-only edges green, diffAgainst-only red dashed. */
+  diffAgainst?: Netlist;
+  /** Firmware badge on the Uno silhouette (short hash + pins used). */
+  firmware?: BoardViewFirmwareBadge;
+}
+
+export type BoardViewProps = BoardViewStepProps | BoardViewNetlistProps;
 
 function svgXY(ref: TargetRef): { x: number; y: number } | null {
   const p = refToXY(ref);
@@ -344,12 +376,17 @@ function staticBoard(): ReactElement[] {
   return els;
 }
 
-export default function BoardView({
+export default function BoardView(props: BoardViewProps) {
+  if ("netlist" in props) return <NetlistBoard {...props} />;
+  return <StepBoard {...props} />;
+}
+
+function StepBoard({
   steps,
   currentIndex,
   phase,
   seatedIds,
-}: BoardViewProps) {
+}: BoardViewStepProps) {
   const seated = steps.filter((s) => seatedIds.includes(s.edge.id));
   const current =
     currentIndex >= 0 && currentIndex < steps.length
@@ -433,6 +470,192 @@ export default function BoardView({
             );
           })()
         : null}
+    </svg>
+  );
+}
+
+// --- netlist mode (commit-state diagram) --------------------------------------
+
+/** Stroke color for a drawable edge. In single-commit mode everything is
+ * "neutral" and renders green (the as-built state); in diff mode neutral
+ * (shared) wiring dims to gray so added/removed stand out. */
+function edgeColor(status: DrawableEdge["status"], diffMode: boolean): string {
+  if (status === "added") return ACCENT;
+  if (status === "removed") return ERROR;
+  return diffMode ? MUTED : ACCENT;
+}
+
+/** Glyph for a component edge, centered on the midpoint of its two holes. */
+function componentGlyph(
+  edge: NetlistEdge,
+  mx: number,
+  my: number,
+  color: string,
+): ReactElement {
+  const part = (edge.part ?? "").toLowerCase();
+  if (part.includes("led")) {
+    return (
+      <g>
+        <circle cx={mx} cy={my} r={11} fill={color} stroke={HOLE} strokeWidth={2} />
+        <circle cx={mx} cy={my} r={4} fill={HOLE} opacity={0.6} />
+      </g>
+    );
+  }
+  if (part.includes("resistor")) {
+    return (
+      <rect
+        x={mx - 16}
+        y={my - 7}
+        width={32}
+        height={14}
+        rx={3}
+        fill={PANEL}
+        stroke={color}
+        strokeWidth={3}
+      />
+    );
+  }
+  if (part.includes("button") || part.includes("switch")) {
+    return (
+      <g>
+        <rect
+          x={mx - 10}
+          y={my - 10}
+          width={20}
+          height={20}
+          rx={3}
+          fill={PANEL}
+          stroke={color}
+          strokeWidth={3}
+        />
+        <circle cx={mx} cy={my} r={4} fill={color} />
+      </g>
+    );
+  }
+  if (part.includes("dht")) {
+    return (
+      <rect
+        x={mx - 14}
+        y={my - 11}
+        width={28}
+        height={22}
+        rx={3}
+        fill={PANEL}
+        stroke={color}
+        strokeWidth={3}
+      />
+    );
+  }
+  // Unknown component: a diamond, so it never reads as a plain wire.
+  return (
+    <rect
+      x={mx - 9}
+      y={my - 9}
+      width={18}
+      height={18}
+      fill={PANEL}
+      stroke={color}
+      strokeWidth={3}
+      transform={`rotate(45 ${mx} ${my})`}
+    />
+  );
+}
+
+function FirmwareBadgeGlyph({ badge }: { badge: BoardViewFirmwareBadge }) {
+  const pins = badge.pinsUsed.map((p) => p.replace(/^UNO:/, ""));
+  return (
+    <g>
+      <rect
+        x={340}
+        y={876}
+        width={320}
+        height={74}
+        rx={10}
+        fill={HOLE}
+        stroke={BORDER}
+        strokeWidth={2}
+      />
+      <text
+        x={500}
+        y={906}
+        fontSize={22}
+        fill={ACCENT}
+        textAnchor="middle"
+        fontFamily="ui-monospace, monospace"
+      >
+        fw {badge.hash.slice(0, 8)}
+      </text>
+      <text x={500} y={934} fontSize={15} fill={MUTED} textAnchor="middle">
+        {pins.length > 0 ? pins.join(" · ") : "no pins used"}
+      </text>
+    </g>
+  );
+}
+
+function NetlistBoard({ netlist, diffAgainst, firmware }: BoardViewNetlistProps) {
+  const diffMode = diffAgainst !== undefined;
+  const drawables = drawableEdges(netlist, refToXY, diffAgainst);
+
+  return (
+    <svg
+      viewBox={`0 0 ${BOARD_W} ${BOARD_H}`}
+      role="img"
+      aria-label={
+        diffMode
+          ? "Commit diff diagram: green wiring added, red dashed wiring removed"
+          : "Commit board diagram with exact hole wiring"
+      }
+      style={{
+        width: "100%",
+        maxWidth: 560,
+        display: "block",
+        margin: "0 auto",
+      }}
+    >
+      {staticBoard()}
+
+      {drawables.map((d, i) => {
+        const a = { x: d.from.x * BOARD_W, y: d.from.y * BOARD_H };
+        const b = { x: d.to.x * BOARD_W, y: d.to.y * BOARD_H };
+        const color = edgeColor(d.status, diffMode);
+        const removed = d.status === "removed";
+        const mx = (a.x + b.x) / 2;
+        const my = (a.y + b.y) / 2;
+        const label =
+          d.edge.kind === "component"
+            ? `${d.edge.part ?? "component"}${d.edge.value ? ` ${d.edge.value}` : ""}`
+            : null;
+        return (
+          <g key={`${d.status}-${d.edge.id}-${i}`} opacity={diffMode && d.status === "neutral" ? 0.55 : 0.95}>
+            <line
+              x1={a.x}
+              y1={a.y}
+              x2={b.x}
+              y2={b.y}
+              stroke={color}
+              strokeWidth={removed ? 5 : 6}
+              strokeLinecap="round"
+              strokeDasharray={removed ? "12 8" : undefined}
+            />
+            <circle cx={a.x} cy={a.y} r={7} fill={color} />
+            <circle cx={b.x} cy={b.y} r={7} fill={color} />
+            {d.edge.kind === "component" ? componentGlyph(d.edge, mx, my, color) : null}
+            {label ? (
+              <text
+                x={mx}
+                y={my - 18}
+                fontSize={14}
+                fill={color}
+                textAnchor="middle"
+              >
+                {label}
+              </text>
+            ) : null}
+          </g>
+        );
+      })}
+
+      {firmware ? <FirmwareBadgeGlyph badge={firmware} /> : null}
     </svg>
   );
 }

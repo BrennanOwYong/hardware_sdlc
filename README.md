@@ -62,6 +62,18 @@ All runtime and bundled media share one root, `data/images/`, streamed through `
 
 Submitting a live Ctrl-F search freezes the frame (snap on submit) and auto-saves the run through `POST /api/live-captures` into `data/images/live-view/`: a recorded clip that ends at the submit moment (webm or mp4; skipped when the browser lacks `MediaRecorder` or the clip exceeds 30 MB), the frozen frame JPEG, a results PNG styled like the photo-mode parts table, and a metadata json, all sharing one id. `GET /api/live-captures` lists saved captures newest-first. Keyless runs save nothing: mock parts would not describe the real frozen frame.
 
+## Coach mode (`/coach`)
+
+Coach mode answers "which socket, which way?" with annotated photos of your own bench. Type a single-action goal ("plug the USB cable into the Uno's socket"), photograph the bench, and `POST /api/coach` returns a verdict (`adjust`, `done`, or `cannot-see`), one plain instruction, labeled boxes on the objects it recognized, a pulsing target marker on the exact spot to act on, and an arrow when direction helps - all drawn on your photo with the same marker machinery as inventory's AR pins. A wrong guess raises the attempt counter, and the next instruction corrects the specific mistake; retry photos carry the last few instructions as history so guidance stays consistent. Frames upload at <=1568 px; geometry returns normalized and server-clamped into 0..1. Keyless runs, malformed model output, and upstream API errors all degrade to a `cannot-see` verdict with a plain note (HTTP 200), never an error screen. Each exchange also fire-and-forgets a build-journal entry (next section); a journal failure never disturbs the coaching flow.
+
+## Git for hardware (`/timeline`)
+
+Commits (`lib/vcs`, `data/commits.json`) capture end states: message, photo, hole-precise netlist, firmware code and hash. Two additions record the work between end states and draw each state on the board:
+
+**Build journal.** Version control tracks the steps done between commits: every coach exchange (annotated frame + instruction + verdict + attempt) and every flash event ("compiled `<hash>`", plus "flashed `<hash>` to `<board>`" when a board is attached) appends a pending entry via `POST /api/journal`; frames land in `data/images/journal/` and stream through `/api/images/journal/<file>`. `POST /api/commits` drains the pending list into the new commit's `journal` field, so entries attach to the first commit after they happened; a rejected commit restores its drained entries, so no entry is lost. The timeline renders the journal as a collapsible list under each commit card. Commits from before the feature (no `journal` field) stay valid with no migration.
+
+**Commit-state diagram.** Each commit renders its netlist on the breadboard+Uno drawing (`components/BoardView.tsx` netlist mode) with every wire endpoint on the exact drawn hole, through the same `refToXY` mapping the assembly view uses ("BB:15:a", "UNO:D2"), plus a firmware badge showing the hash and the pins the netlist uses; an edge with an unmappable ref is dropped instead of drawn in a wrong place. Selecting two commits renders one diff diagram - added wiring in green, removed wiring in red at its old coordinates (`lib/diagram/selectors.ts`, keyed on physical identity like `lib/vcs/diff.ts`) - next to the existing sentence diff.
+
 ## Bench and the pairing wizard (`/bench`)
 
 `/bench` walks a total beginner from "no board yet" to "equipment confirmed working":
@@ -164,6 +176,12 @@ Deep links each builder verified via WebFetch on 2026-07-23 before implementing.
 
 - Next.js route handlers (`context.params` is a Promise since v15; `runtime = "nodejs"`, `dynamic = "force-dynamic"`): https://nextjs.org/docs/app/api-reference/file-conventions/route
 - Node native TypeScript execution constraints for `tests/vcs.test.mjs`: https://nodejs.org/api/typescript.html
+
+### Coach mode (`lib/coach`, `/api/coach`, `/coach`)
+
+Full notes: `docs/references-coach.md` (re-verified via WebFetch 2026-07-24).
+
+- Anthropic vision (base64 block shape, high-resolution tier for `claude-sonnet-5`, why 1568 px frames upload unresized): https://platform.claude.com/docs/en/build-with-claude/vision.md
 
 ### Codegen (`lib/codegen`, `/api/codegen`, `components/CodePanel.tsx`)
 

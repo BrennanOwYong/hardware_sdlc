@@ -1,10 +1,15 @@
 // GET  /api/commits  -> { commits } in creation order (oldest first)
-// POST /api/commits  -> create a commit; parent defaults to head of "main"
+// POST /api/commits  -> create a commit; parent defaults to head of "main".
+//                       Pending build-journal entries (coach steps, flash
+//                       events) are drained into the new commit's `journal`
+//                       field, so the timeline shows the steps DONE between
+//                       commits, not only end states (FEEDBACK 13).
 // Route handler conventions verified against docs/references-p3.md.
 
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getStore, VcsError } from "@/lib/vcs/store";
+import { getJournalStore } from "@/lib/journal/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,10 +50,16 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
+  // Drain pending journal entries into this commit. On a failed create the
+  // drained entries go back to the pending list so they attach to the next
+  // successful commit instead of vanishing.
+  const journalStore = getJournalStore();
+  const journal = await journalStore.drainPending();
   try {
-    const commit = await getStore().create(parsed.data);
+    const commit = await getStore().create({ ...parsed.data, journal });
     return NextResponse.json({ commit }, { status: 201 });
   } catch (err) {
+    await journalStore.restorePending(journal);
     if (err instanceof VcsError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }

@@ -28,6 +28,7 @@ export default function RootLayout({
           <Link href="/assemble">Assemble</Link>
           <Link href="/timeline">Timeline</Link>
           <Link href="/bench">Bench</Link>
+          <Link href="/coach">Coach</Link>
           <BenchChip />
         </nav>
         <main>{children}</main>

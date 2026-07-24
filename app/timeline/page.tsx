@@ -1,14 +1,22 @@
 "use client";
 
 // P3 git-for-hardware timeline: commit list (newest first, branch badges),
-// two-commit diff with photos, rollback plan, fork.
+// two-commit diff with photos, rollback plan, fork. Delta additions:
+//   - build journal (FEEDBACK 13): each commit card carries a collapsible
+//     list of the coach steps and flash events drained into it, with coach
+//     frames as thumbnails (via /api/images) and firmware-hash badges
+//   - commit-state diagram (FEEDBACK 14): one selected commit renders its
+//     hole-precise netlist on BoardView with a firmware badge; two selected
+//     render ONE diagram in diff mode next to the existing sentence list
 // Guards below re-check API payload shapes because lib/vcs/store.ts (which
 // owns the server-side guards) imports node builtins and cannot be bundled
 // into a client page.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { BuildCommit, NetlistEdge } from "@/lib/types";
+import type { BuildCommit, JournalEntry, NetlistEdge } from "@/lib/types";
 import { describeEdge, diff, type RollbackOp } from "@/lib/vcs/diff";
+import { pinsUsedFromNetlist } from "@/lib/diagram/selectors";
+import BoardView from "@/components/BoardView";
 
 // --- payload guards ----------------------------------------------------------
 
@@ -28,6 +36,26 @@ function isEdge(v: unknown): v is NetlistEdge {
   );
 }
 
+function optionalString(v: unknown): v is string | undefined {
+  return v === undefined || typeof v === "string";
+}
+
+function isJournalEntry(v: unknown): v is JournalEntry {
+  if (!isRecord(v)) return false;
+  return (
+    typeof v.id === "string" &&
+    typeof v.at === "string" &&
+    (v.kind === "coach" || v.kind === "flash") &&
+    typeof v.summary === "string" &&
+    optionalString(v.detail) &&
+    optionalString(v.framePath) &&
+    optionalString(v.goal) &&
+    optionalString(v.attempt) &&
+    optionalString(v.verdict) &&
+    optionalString(v.firmwareHash)
+  );
+}
+
 function isCommit(v: unknown): v is BuildCommit {
   if (!isRecord(v)) return false;
   const firmware = v.firmware;
@@ -44,7 +72,9 @@ function isCommit(v: unknown): v is BuildCommit {
     netlist.edges.every(isEdge) &&
     isRecord(firmware) &&
     typeof firmware.code === "string" &&
-    typeof firmware.hash === "string"
+    typeof firmware.hash === "string" &&
+    (v.journal === undefined ||
+      (Array.isArray(v.journal) && v.journal.every(isJournalEntry)))
   );
 }
 
@@ -91,6 +121,86 @@ interface PlanState {
   targetFirmwareHash: string;
   fromId: string;
   toId: string;
+}
+
+/** Firmware badge props for a commit's diagram: short-hashable hash + the
+ * UNO pins its netlist touches (pins are derivable from the netlist alone). */
+function firmwareBadgeFor(c: BuildCommit): { hash: string; pinsUsed: string[] } {
+  return { hash: c.firmware.hash, pinsUsed: pinsUsedFromNetlist(c.netlist) };
+}
+
+/** Collapsible build journal under a commit: entry summaries with
+ * timestamps, coach frames as thumbnails, flash entries with hash badges. */
+function JournalList({ entries }: { entries: JournalEntry[] }) {
+  return (
+    <details style={{ marginTop: "0.5rem" }}>
+      <summary
+        className="muted"
+        style={{ cursor: "pointer", fontSize: "0.8rem" }}
+      >
+        build journal ({entries.length}{" "}
+        {entries.length === 1 ? "entry" : "entries"})
+      </summary>
+      <ul style={{ listStyle: "none", marginTop: "0.5rem" }}>
+        {entries.map((e) => (
+          <li
+            key={e.id}
+            style={{
+              display: "flex",
+              gap: "0.5rem",
+              alignItems: "flex-start",
+              marginBottom: "0.5rem",
+            }}
+          >
+            {e.framePath ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={`/api/images/${e.framePath}`}
+                alt={`Frame for journal entry: ${e.summary}`}
+                width={56}
+                height={42}
+                style={{
+                  objectFit: "cover",
+                  borderRadius: 6,
+                  border: "1px solid var(--border)",
+                  flexShrink: 0,
+                }}
+              />
+            ) : null}
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: "0.85rem" }}>
+                <span className="badge" style={{ marginRight: "0.35rem" }}>
+                  {e.kind}
+                </span>
+                {e.summary}
+                {e.kind === "flash" && e.firmwareHash ? (
+                  <span
+                    className="badge mono"
+                    style={{
+                      marginLeft: "0.35rem",
+                      borderColor: "var(--accent)",
+                      color: "var(--accent)",
+                    }}
+                  >
+                    {e.firmwareHash.slice(0, 8)}
+                  </span>
+                ) : null}
+              </div>
+              <div className="muted mono" style={{ fontSize: "0.7rem" }}>
+                {formatWhen(e.at)}
+                {e.verdict ? ` · ${e.verdict}` : ""}
+              </div>
+              {e.detail ? (
+                <div className="muted" style={{ fontSize: "0.75rem" }}>
+                  {e.detail}
+                </div>
+              ) : null}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
 }
 
 // --- page ----------------------------------------------------------------------
@@ -295,6 +405,19 @@ export default function TimelinePage() {
             {shortId(pair.older.id)} (fw {pair.older.firmware.hash.slice(0, 8)}) →{" "}
             {shortId(pair.newer.id)} (fw {pair.newer.firmware.hash.slice(0, 8)})
           </p>
+          <div style={{ margin: "0.75rem 0" }}>
+            <BoardView
+              netlist={pair.newer.netlist}
+              diffAgainst={pair.older.netlist}
+              firmware={firmwareBadgeFor(pair.newer)}
+            />
+            <p
+              className="muted"
+              style={{ fontSize: "0.75rem", textAlign: "center", marginTop: "0.25rem" }}
+            >
+              green = added in B · red dashed = removed since A · gray = unchanged
+            </p>
+          </div>
           {pairDiff.added.length === 0 && pairDiff.removed.length === 0 ? (
             <p className="muted" style={{ marginTop: "0.5rem" }}>
               No netlist changes between these commits.
@@ -360,6 +483,12 @@ export default function TimelinePage() {
             {shortId(single.id)} · branch {single.branch} · fw{" "}
             {single.firmware.hash.slice(0, 8)} · {formatWhen(single.createdAt)}
           </p>
+          <div style={{ margin: "0.75rem 0" }}>
+            <BoardView
+              netlist={single.netlist}
+              firmware={firmwareBadgeFor(single)}
+            />
+          </div>
           {single.netlist.edges.length === 0 ? (
             <p className="muted" style={{ marginTop: "0.5rem" }}>
               Empty board.
@@ -398,57 +527,71 @@ export default function TimelinePage() {
       {newestFirst.map((c) => {
         const sel = selected.indexOf(c.id);
         return (
-          <button
+          // The card is a div (with an inner selection button) rather than a
+          // button so the collapsible journal <details> stays valid HTML and
+          // toggling it never flips the commit selection.
+          <div
             key={c.id}
-            onClick={() => toggle(c.id)}
             className="card"
             style={{
-              width: "100%",
-              textAlign: "left",
-              cursor: "pointer",
-              font: "inherit",
-              color: "inherit",
-              display: "block",
               borderColor: sel >= 0 ? "var(--accent)" : "var(--border)",
             }}
           >
-            <div
+            <button
+              onClick={() => toggle(c.id)}
               style={{
-                display: "flex",
-                justifyContent: "space-between",
-                gap: "0.5rem",
-                flexWrap: "wrap",
-                alignItems: "center",
+                width: "100%",
+                textAlign: "left",
+                cursor: "pointer",
+                font: "inherit",
+                color: "inherit",
+                display: "block",
+                background: "none",
+                border: "none",
+                padding: 0,
               }}
             >
-              <strong>{c.message}</strong>
-              <span style={{ display: "inline-flex", gap: "0.35rem" }}>
-                <span
-                  className="badge"
-                  style={
-                    c.branch === "main"
-                      ? undefined
-                      : { borderColor: "var(--warn)", color: "var(--warn)" }
-                  }
-                >
-                  {c.branch}
-                </span>
-                {sel >= 0 && (
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: "0.5rem",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                }}
+              >
+                <strong>{c.message}</strong>
+                <span style={{ display: "inline-flex", gap: "0.35rem" }}>
                   <span
                     className="badge"
-                    style={{ borderColor: "var(--accent)", color: "var(--accent)" }}
+                    style={
+                      c.branch === "main"
+                        ? undefined
+                        : { borderColor: "var(--warn)", color: "var(--warn)" }
+                    }
                   >
-                    {sel === 0 ? "A" : "B"}
+                    {c.branch}
                   </span>
-                )}
-              </span>
-            </div>
-            <div className="muted mono" style={{ fontSize: "0.75rem", marginTop: "0.25rem" }}>
-              {shortId(c.id)} · fw {c.firmware.hash.slice(0, 8)} ·{" "}
-              {c.netlist.edges.length} edge{c.netlist.edges.length === 1 ? "" : "s"} ·{" "}
-              {formatWhen(c.createdAt)}
-            </div>
-          </button>
+                  {sel >= 0 && (
+                    <span
+                      className="badge"
+                      style={{ borderColor: "var(--accent)", color: "var(--accent)" }}
+                    >
+                      {sel === 0 ? "A" : "B"}
+                    </span>
+                  )}
+                </span>
+              </div>
+              <div className="muted mono" style={{ fontSize: "0.75rem", marginTop: "0.25rem" }}>
+                {shortId(c.id)} · fw {c.firmware.hash.slice(0, 8)} ·{" "}
+                {c.netlist.edges.length} edge{c.netlist.edges.length === 1 ? "" : "s"} ·{" "}
+                {formatWhen(c.createdAt)}
+              </div>
+            </button>
+            {c.journal && c.journal.length > 0 ? (
+              <JournalList entries={c.journal} />
+            ) : null}
+          </div>
         );
       })}
     </>

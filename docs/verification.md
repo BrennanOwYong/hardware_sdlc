@@ -88,3 +88,24 @@ Production server left RUNNING on port 3123 throughout (integrator-managed; not 
 | 13 | `npm run test` | PASS | 108 tests, 108 pass, 0 fail: prior 90 plus `tests/identify-prompts.test.mjs` (9) and `tests/photos.test.mjs` (9) |
 | 14 | `TESTING.md` T13/T14 | PASS | Repo-root `TESTING.md` (at `hardware_project/TESTING.md`) lines 45 and 49: T13 General desk ID, T14 Photo library, each with +VE/-VE/JUDGE |
 | 15 | Re-warm | PASS | `/`, `/inventory`, `/assemble`, `/bench`, `/timeline` all 200 at end of run; server left RUNNING |
+
+## Masks + live UX + storage migration verification (2026-07-24)
+
+Tested through the proxy at http://localhost:3123 (proxy, tunnel, and backend ports untouched). ANTHROPIC_API_KEY and REPLICATE_API_TOKEN live; one check spent real API money on purpose.
+
+| # | Check | Result | Detail |
+|---|-------|--------|--------|
+| 1 | Pages `/`, `/inventory`, `/assemble`, `/timeline`, `/bench` | PASS | All 200 through the proxy |
+| 2 | GET `/api/images/practice/manifest.json` | PASS | 200; entries carry `file` names (no absolute URLs); `lib/practice/manifest.ts` joins them onto `PRACTICE_BASE_PATH = "/api/images/practice"`, so every served URL starts with `/api/images/practice/`. `sourceUrl` fields are external attribution links by design |
+| 3 | Media through `/api/images/` | PASS | `uno-closeup.jpg` 200 `image/jpeg`; `wiring-hands-1.mp4` 200 `video/mp4` |
+| 4 | Traversal `/api/images/../../.env` (`--path-as-is`) | PASS | 404 Next.js not-found page, zero secret content. Encoded form `..%2F..%2F.env` -> 404 JSON `"no image at practice/../../.env"` with the folder-explainer note |
+| 5 | POST `/api/photos` tiny JPEG | PASS | 201 with photo id; file landed at `data/images/user/<id>.jpg` and `data/images/user/index.json`. Migration confirmed: `data/photos/` does not exist |
+| 6 | POST `/api/live-captures` no clip | PASS | 201; frame + results + meta files under `data/images/live-view/` sharing one id, URLs all `/api/images/live-view/...` |
+| 7 | POST `/api/live-captures` with webm clip | PASS | 201; clip + frame + results + meta share one id; `clipMime: "video/webm"`, `clipBytes: 25` recorded |
+| 8 | GET `/api/live-captures` | PASS | 200; newest-first (the later clip capture listed before the earlier no-clip one) |
+| 9 | POST `/api/identify` `{"useSample":true}` fast path | PASS | 200 in 0.017 s (keys live, so speed proves the fast path); known sample inventory (12 parts) with note "sample sheet uses its known inventory - photograph something real for live vision" |
+| 10 | POST `/api/identify` real practice photo (uno-closeup.jpg, 1.9 MB base64) | PASS | 200 in 53.8 s (limit 120 s); note `"sam+vlm: 8 regions, 8 labeled, masks on 8 parts"`; all 8 parts carry `maskPng` whose base64 decodes to a real PNG (`89 50 4E 47` header, first mask 4,404 bytes). Live SAM + Claude spend, first attempt, no retry needed |
+| 11 | `npm run test` | PASS | 163 tests, 163 pass, 0 fail |
+| 12 | `TESTING.md` T15/T16/T17 | PASS | Repo-root `TESTING.md` lines 66/70/74: T15 pixel-exact masks, T16 snap-on-submit states, T17 live-view artifacts |
+| 13 | `FEEDBACK.md` items 2/3/4/9/10 | PASS | All five read "Status: LIVE" |
+| 14 | Re-warm | PASS | All five pages fetched 200 through the proxy at end of run; proxy and backend left untouched and RUNNING |

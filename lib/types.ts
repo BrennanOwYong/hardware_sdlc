@@ -16,7 +16,8 @@ export type PerceptionListener = (e: PerceptionEvent) => void;
 export interface PerceptionBackend { start(): void; stop(): void; subscribe(l: PerceptionListener): () => void; inject?(e: PerceptionEvent): void; }
 export type BackendMode = 'mock' | 'manual' | 'live';
 export interface LiveSourceOptions { source: 'camera' | 'screen' | 'file'; intervalMs?: number; fileUrl?: string; }
-export interface BuildCommit { id: string; parent: string | null; branch: string; message: string; createdAt: string; photoDataUrl?: string; netlist: Netlist; firmware: { code: string; hash: string }; }
+export interface JournalEntry { id: string; at: string; kind: "coach" | "flash"; summary: string; detail?: string; framePath?: string; goal?: string; attempt?: string; verdict?: string; firmwareHash?: string; } // at = ISO timestamp; framePath is relative to data/images/ and served by GET /api/images/<framePath>
+export interface BuildCommit { id: string; parent: string | null; branch: string; message: string; createdAt: string; photoDataUrl?: string; netlist: Netlist; firmware: { code: string; hash: string }; journal?: JournalEntry[]; }
 export interface NetlistDiff { added: NetlistEdge[]; removed: NetlistEdge[]; }
 export interface CodegenRequest { netlist: Netlist; circuitHint?: 'button-led' | 'dht11'; intent?: string; }
 export interface CodegenResult { code: string; hash: string; pinsUsed: string[]; via: 'template' | 'llm'; }
