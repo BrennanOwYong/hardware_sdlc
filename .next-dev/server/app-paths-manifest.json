@@ -1,5 +1,11 @@
 {
-  "/page": "app/page.js",
+  "/api/identify/route": "app/api/identify/route.js",
+  "/api/images/[...path]/route": "app/api/images/[...path]/route.js",
   "/api/assess/route": "app/api/assess/route.js",
-  "/check/page": "app/check/page.js"
+  "/api/commits/route": "app/api/commits/route.js",
+  "/api/photos/[id]/file/route": "app/api/photos/[id]/file/route.js",
+  "/assemble/page": "app/assemble/page.js",
+  "/inventory/page": "app/inventory/page.js",
+  "/check/page": "app/check/page.js",
+  "/timeline/page": "app/timeline/page.js"
 }
