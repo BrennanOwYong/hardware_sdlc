@@ -29,6 +29,7 @@ export default function RootLayout({
           <Link href="/timeline">Timeline</Link>
           <Link href="/bench">Bench</Link>
           <Link href="/coach">Coach</Link>
+          <Link href="/builder">Builder</Link>
           <BenchChip />
         </nav>
         <main>{children}</main>

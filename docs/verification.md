@@ -109,3 +109,24 @@ Tested through the proxy at http://localhost:3123 (proxy, tunnel, and backend po
 | 12 | `TESTING.md` T15/T16/T17 | PASS | Repo-root `TESTING.md` lines 66/70/74: T15 pixel-exact masks, T16 snap-on-submit states, T17 live-view artifacts |
 | 13 | `FEEDBACK.md` items 2/3/4/9/10 | PASS | All five read "Status: LIVE" |
 | 14 | Re-warm | PASS | All five pages fetched 200 through the proxy at end of run; proxy and backend left untouched and RUNNING |
+
+## Coach + build journal + commit diagram verification (2026-07-24)
+
+Tested through the proxy at http://localhost:3123 (proxy, tunnel, and backend ports untouched; 3125 live). ANTHROPIC_API_KEY live; the coach check spent real API money on purpose.
+
+| # | Check | Result | Detail |
+|---|-------|--------|--------|
+| 1 | GET `/coach` | PASS | 200; page carries the goal input (`maxLength=200`, placeholder "plug the USB cable into the Arduino's..."); nav `href="/coach">Coach` present on `/coach` and `/` |
+| 2 | POST `/api/coach` real photo | PASS | `data/images/practice/uno-closeup.jpg` (2.5 MB base64) + goal "point out the Arduino board" -> 200 in 5.4 s (Claude-only path, within the 10-15 s expectation); strict JSON: `verdict: "done"`, one-sentence `instruction`, `objects[]` with 4 labeled bboxes (board, USB-B port, pin headers, MCU chip), `target`, `confidence: 0.95` |
+| 3 | POST `/api/coach` zod-invalid | PASS | `{"goal":"x"}` -> 400 with degrade-shaped body (`verdict: "cannot-see"`, note "invalid request: imageBase64: Required; attempt: Required"); no 500 |
+| 4 | POST `/api/journal` coach fixture | PASS | Tiny 1x1 JPEG frame -> 201; entry got `framePath: journal/<id>.jpg`; GET `/api/journal` pending grew 0 -> 1 |
+| 5 | POST `/api/flash` tiny sketch | PASS | Blink sketch -> `{ok:true, stage:"compile", firmwareHash:"e1c7cde6c4e8"}` with plug-in guidance (no board attached); pending journal grew to 2 with the `flash` entry "compiled e1c7cde6c4e8" |
+| 6 | POST `/api/commits` drains journal | PASS | Sample commit (1-edge netlist) -> 201; commit `0a5bdb66` carries `journal` with both entries (coach + flash) in order; GET `/api/journal` back to `{"entries":[]}`; GET `/api/commits` shows the entry summaries on the commit |
+| 7 | Timeline chunk journal + diagram | PASS | `app/timeline/page-*.js` chunk contains "build journal" and "Frame for journal entry" plus 12 `firmware` hits; shared chunk `481-*.js` (BoardView) contains 6 `breadboard` hits and "diagram with exact hole wiring" |
+| 8 | `/assemble` regression | PASS | 200; its page chunk still carries the step-mode BoardView props (`steps` x21, `currentIndex` x12, `seatedIds` x11, `phase:` x17) matching `app/assemble/page.tsx:601` |
+| 9 | `npm run test` | PASS | 187 tests, 187 pass, 0 fail |
+| 10 | `TESTING.md` T19/T20/T21 | PASS | Repo-root `TESTING.md` lines 81/85/89: T19 coach USB drill, T20 build journal, T21 commit-state diagram, each with full +VE/-VE/JUDGE |
+| 11 | `FEEDBACK.md` 12/13/14 | PASS | All three read "Status: LIVE, awaiting your T19/T20/T21 verdict" |
+| 12 | Re-warm | PASS | `/`, `/inventory`, `/assemble`, `/timeline`, `/bench`, `/coach` all 200 (13-17 ms warm) at end of run; proxy and backend left RUNNING |
+
+Residue left on purpose: commit `0a5bdb66-5273-4505-8bc6-89bed3968ba4` ("verifier T20 journal drain commit") in `data/commits.json` with its two journal entries, and the journal frame at `data/images/journal/604cdfc1-....jpg` - live proof the drain works; visible on `/timeline` for the T20 walkthrough.

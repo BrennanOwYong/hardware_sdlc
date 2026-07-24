@@ -16,6 +16,10 @@ import type { PerceptionEvent } from "@/lib/types";
 
 export const PERCEIVE_MODEL = "claude-sonnet-5";
 
+/** Fast tier for the live-lab streaming experiment (dated full ID per the
+ * models overview - see docs/references-livelab.md). */
+export const PERCEIVE_FAST_MODEL = "claude-haiku-4-5-20251001";
+
 export const perceiveRequestSchema = z.object({
   /** Raw base64 image bytes; a data: URL prefix is tolerated and stripped. */
   frameBase64: z.string().min(1),
@@ -23,6 +27,12 @@ export const perceiveRequestSchema = z.object({
   expectedTargets: z.array(z.string().min(1)).min(1),
   phase: z.enum(["awaiting-tip", "awaiting-seat"]),
   edgeId: z.string().min(1),
+  /** Which vision model judges this frame. Optional on the wire; defaults to
+   * Sonnet 5 so every existing caller keeps its behavior. The live-lab page
+   * sends the Haiku full ID to measure the fast tier. */
+  model: z
+    .enum(["claude-sonnet-5", "claude-haiku-4-5-20251001"])
+    .default(PERCEIVE_MODEL),
 });
 
 export type PerceiveRequest = z.infer<typeof perceiveRequestSchema>;
@@ -198,12 +208,15 @@ async function askVision(
   const prompt = extraInstruction
     ? `${buildVisionPrompt(req)}\n\n${extraInstruction}`
     : buildVisionPrompt(req);
-  // Image before text per the vision docs; thinking disabled so the ~300-token
-  // budget goes entirely to the JSON verdict (adaptive is Sonnet 5's default).
-  const message = await client.messages.create({
-    model: PERCEIVE_MODEL,
+  // Image before text per the vision docs. Thinking handling is per-model:
+  // Sonnet 5 runs adaptive thinking by default, so it gets an explicit
+  // disable to keep the ~300-token budget on the JSON verdict; Haiku 4.5
+  // has no adaptive mode and runs without thinking when the field is
+  // omitted (models overview - docs/references-livelab.md), so the param
+  // is left off rather than sending a config the model may reject.
+  const params: Anthropic.MessageCreateParamsNonStreaming = {
+    model: req.model,
     max_tokens: 300,
-    thinking: { type: "disabled" },
     messages: [
       {
         role: "user",
@@ -216,7 +229,11 @@ async function askVision(
         ],
       },
     ],
-  });
+  };
+  if (req.model === PERCEIVE_MODEL) {
+    params.thinking = { type: "disabled" };
+  }
+  const message = await client.messages.create(params);
   return messageText(message);
 }
 
