@@ -12,6 +12,8 @@
 
 import { useCallback, useRef, useState, type ChangeEvent } from "react";
 import ArMarkerLayer from "@/components/ArMarkerLayer";
+import GuideArrow from "@/components/GuideArrow";
+import MaskOverlay from "@/components/MaskOverlay";
 import { markerFromBbox } from "@/lib/inventory/markers";
 import {
   coachResponseSchema,
@@ -348,6 +350,22 @@ export default function CoachPage() {
       {response?.note ? (
         <p className="muted" style={{ fontSize: "0.8rem", marginTop: "-0.35rem" }}>
           {response.note}
+          {response.guide ? (
+            <span
+              className="badge"
+              style={{
+                marginLeft: "0.4rem",
+                borderColor:
+                  response.guide.source === "mask" ? "var(--accent)" : "var(--warn)",
+                color: response.guide.source === "mask" ? "var(--accent)" : "var(--warn)",
+              }}
+              title={response.guide.note}
+            >
+              {response.guide.source === "mask"
+                ? "pixel-accurate"
+                : "estimated position"}
+            </span>
+          ) : null}
         </p>
       ) : null}
 
@@ -367,50 +385,48 @@ export default function CoachPage() {
               }}
             />
             <ArMarkerLayer markers={markers} visible={hasResult} />
-            {hasResult && response?.target ? (
+            {/* The destination highlighted by its OWN pixels when segmentation
+                resolved it, so the user sees the exact socket rather than a
+                dot floating near it. */}
+            {hasResult && response?.guide?.targetMaskPng && response.guide.targetBbox ? (
+              <MaskOverlay
+                parts={[
+                  {
+                    id: "coach-target",
+                    label: response.target?.label ?? "here",
+                    partType: "target",
+                    confidence: 1,
+                    bbox: response.guide.targetBbox as [number, number, number, number],
+                    maskPng: response.guide.targetMaskPng,
+                  },
+                ]}
+                width={frame.w}
+                height={frame.h}
+              />
+            ) : hasResult && response?.target ? (
               <TargetMarker
                 x={response.target.x}
                 y={response.target.y}
                 label={response.target.label}
               />
             ) : null}
-            {hasResult && response?.arrow ? (
-              <svg
-                aria-hidden="true"
-                viewBox={`0 0 ${frame.w} ${frame.h}`}
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  width: "100%",
-                  height: "100%",
-                  pointerEvents: "none",
-                }}
-              >
-                <defs>
-                  <marker
-                    id="coach-arrowhead"
-                    markerWidth="8"
-                    markerHeight="8"
-                    refX="6"
-                    refY="4"
-                    orient="auto"
-                  >
-                    <path d="M0,0 L8,4 L0,8 z" fill={AMBER} />
-                  </marker>
-                </defs>
-                <line
-                  x1={response.arrow.from.x * frame.w}
-                  y1={response.arrow.from.y * frame.h}
-                  x2={response.arrow.to.x * frame.w}
-                  y2={response.arrow.to.y * frame.h}
-                  stroke={AMBER}
-                  strokeWidth={Math.max(3, frame.w * 0.004)}
-                  strokeDasharray={`${Math.max(8, frame.w * 0.012)} ${Math.max(6, frame.w * 0.008)}`}
-                  strokeLinecap="round"
-                  markerEnd="url(#coach-arrowhead)"
-                  opacity={0.9}
-                />
-              </svg>
+
+            {/* Arrow endpoints come from mask geometry when both objects were
+                segmented; otherwise it draws dashed to admit it is an estimate. */}
+            {hasResult && response?.guide ? (
+              <GuideArrow
+                from={response.guide.from}
+                to={response.guide.to}
+                label={response.target?.label}
+                precision={response.guide.source}
+              />
+            ) : hasResult && response?.arrow ? (
+              <GuideArrow
+                from={response.arrow.from}
+                to={response.arrow.to}
+                label={response.target?.label}
+                precision="model"
+              />
             ) : null}
             {loading ? (
               <span

@@ -9,6 +9,7 @@
 // - Vision / base64 image blocks, image-before-text ordering:
 //   https://platform.claude.com/docs/en/build-with-claude/vision.md
 import Anthropic from "@anthropic-ai/sdk";
+import { preciseGuide } from "@/lib/coach/geometry";
 
 import {
   buildCoachPrompt,
@@ -134,9 +135,23 @@ export async function POST(request: Request): Promise<Response> {
       );
     }
     const clamped = clampCoachGeometry(verdict.data);
+
+    // Re-anchor the guidance on segmented pixels. The model says WHAT to do;
+    // segmentation says exactly WHERE. Any failure inside returns an estimate
+    // rather than nothing, so this never costs us a coaching turn.
+    let guide = null;
+    try {
+      guide = await preciseGuide(req.imageBase64, clamped);
+    } catch {
+      guide = null;
+    }
+
     return json({
       ...clamped,
-      note: `vlm confidence ${clamped.confidence.toFixed(2)} on attempt ${req.attempt}`,
+      guide,
+      note:
+        `vlm confidence ${clamped.confidence.toFixed(2)} on attempt ${req.attempt}` +
+        (guide ? ` · ${guide.note}` : ""),
     });
   } catch (err) {
     const detail =

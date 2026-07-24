@@ -45,6 +45,20 @@ export const coachVerdictSchema = z.object({
   target: point01.extend({ label: z.string().min(1) }).nullable().default(null),
   /** Movement arrow: from the part's current spot to where it must go. */
   arrow: z.object({ from: point01, to: point01 }).nullable().default(null),
+  /** Mask-anchored guidance geometry: endpoints that sit on real pixels of
+   *  real objects, plus the destination's own mask for exact highlighting.
+   *  source "model" means we fell back to the vision model's estimate. */
+  guide: z
+    .object({
+      from: point01,
+      to: point01,
+      source: z.enum(["mask", "model"]),
+      targetMaskPng: z.string().optional(),
+      targetBbox: z.array(z.number()).length(4).optional(),
+      note: z.string(),
+    })
+    .nullable()
+    .default(null),
   confidence: z.number().min(0).max(1),
 });
 export type CoachVerdict = z.infer<typeof coachVerdictSchema>;
@@ -116,6 +130,7 @@ export function degradedCoachResponse(
     objects: [],
     target: null,
     arrow: null,
+    guide: null,
     confidence: 0,
     note,
   };
