@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from "next";
 import Link from "next/link";
-import BenchChip from "@/components/BenchChip";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -27,10 +26,9 @@ export default function RootLayout({
           <Link href="/inventory">Inventory</Link>
           <Link href="/assemble">Assemble</Link>
           <Link href="/timeline">Timeline</Link>
-          <Link href="/bench">Bench</Link>
           <Link href="/coach">Coach</Link>
+          <Link href="/check">Can I build?</Link>
           <Link href="/builder">Builder</Link>
-          <BenchChip />
         </nav>
         <main>{children}</main>
       </body>

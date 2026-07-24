@@ -205,11 +205,15 @@ function JournalList({ entries }: { entries: JournalEntry[] }) {
 
 // --- page ----------------------------------------------------------------------
 
+
 export default function TimelinePage() {
   const [commits, setCommits] = useState<BuildCommit[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<string[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // null means "compare against my parent", the sensible default for a
+  // sequence. Picking an explicit target is the rare secondary action.
+  const [compareId, setCompareId] = useState<string | null>(null);
   const [plan, setPlan] = useState<PlanState | null>(null);
   const [planLoading, setPlanLoading] = useState(false);
   const [forking, setForking] = useState(false);
@@ -234,57 +238,47 @@ export default function TimelinePage() {
     void refresh();
   }, [refresh]);
 
-  const indexOf = useMemo(() => {
-    const m = new Map<string, number>();
-    commits.forEach((c, i) => m.set(c.id, i));
+  const newestFirst = useMemo(() => [...commits].reverse(), [commits]);
+
+  // Land on the newest commit so the page is never an empty right pane.
+  useEffect(() => {
+    if (!selectedId && newestFirst.length > 0) {
+      setSelectedId(newestFirst[0]?.id ?? null);
+    }
+  }, [newestFirst, selectedId]);
+
+  const byId = useMemo(() => {
+    const m = new Map<string, BuildCommit>();
+    commits.forEach((c) => m.set(c.id, c));
     return m;
   }, [commits]);
 
-  const selectedCommits = useMemo(
-    () =>
-      selected
-        .map((id) => commits.find((c) => c.id === id))
-        .filter((c): c is BuildCommit => c !== undefined),
-    [selected, commits],
+  const selected = selectedId ? (byId.get(selectedId) ?? null) : null;
+
+  // Default comparison: the commit this one grew out of.
+  const compareTo = useMemo(() => {
+    if (!selected) return null;
+    if (compareId) return byId.get(compareId) ?? null;
+    return selected.parent ? (byId.get(selected.parent) ?? null) : null;
+  }, [selected, compareId, byId]);
+
+  const stateDiff = useMemo(
+    () => (selected && compareTo ? diff(compareTo.netlist, selected.netlist) : null),
+    [selected, compareTo],
   );
 
-  // With two selected: older/newer by creation order in the store.
-  const pair = useMemo(() => {
-    if (selectedCommits.length !== 2) return null;
-    const sorted = [...selectedCommits].sort(
-      (x, y) => (indexOf.get(x.id) ?? 0) - (indexOf.get(y.id) ?? 0),
-    );
-    const older = sorted[0];
-    const newer = sorted[1];
-    if (!older || !newer) return null;
-    return { older, newer };
-  }, [selectedCommits, indexOf]);
-
-  const pairDiff = useMemo(
-    () => (pair ? diff(pair.older.netlist, pair.newer.netlist) : null),
-    [pair],
-  );
-
-  const single = selectedCommits.length === 1 ? selectedCommits[0] : undefined;
-
-  const toggle = (id: string) => {
+  const pick = (id: string) => {
+    setSelectedId(id);
+    setCompareId(null);
     setPlan(null);
-    setSelected((prev) => {
-      if (prev.includes(id)) return prev.filter((s) => s !== id);
-      if (prev.length >= 2) {
-        const keep = prev[prev.length - 1];
-        return keep === undefined ? [id] : [keep, id];
-      }
-      return [...prev, id];
-    });
   };
 
   const loadPlan = async () => {
-    if (!pair) return;
+    if (!selected || !compareTo) return;
     setPlanLoading(true);
     try {
       const res = await fetch(
-        `/api/commits/rollback-plan?from=${encodeURIComponent(pair.newer.id)}&to=${encodeURIComponent(pair.older.id)}`,
+        `/api/commits/rollback-plan?from=${encodeURIComponent(selected.id)}&to=${encodeURIComponent(compareTo.id)}`,
       );
       const data: unknown = await res.json();
       if (!res.ok || !isPlanPayload(data)) {
@@ -293,8 +287,8 @@ export default function TimelinePage() {
       setPlan({
         ops: data.ops,
         targetFirmwareHash: data.targetFirmwareHash,
-        fromId: pair.newer.id,
-        toId: pair.older.id,
+        fromId: selected.id,
+        toId: compareTo.id,
       });
       setError(null);
     } catch (e) {
@@ -305,8 +299,7 @@ export default function TimelinePage() {
   };
 
   const fork = async () => {
-    const from = single;
-    if (!from) return;
+    if (!selected) return;
     const branch = window.prompt('New branch name (e.g. "dht11-experiment"):');
     if (!branch || branch.trim() === "") return;
     setForking(true);
@@ -314,12 +307,10 @@ export default function TimelinePage() {
       const res = await fetch("/api/commits/fork", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fromId: from.id, branch: branch.trim() }),
+        body: JSON.stringify({ fromId: selected.id, branch: branch.trim() }),
       });
       const data: unknown = await res.json();
-      if (!res.ok) {
-        throw new Error(readError(data) ?? "fork request failed");
-      }
+      if (!res.ok) throw new Error(readError(data) ?? "fork request failed");
       setError(null);
       await refresh();
     } catch (e) {
@@ -329,271 +320,277 @@ export default function TimelinePage() {
     }
   };
 
-  const newestFirst = useMemo(() => [...commits].reverse(), [commits]);
-
   return (
     <>
       <h1>Timeline</h1>
       <p className="muted" style={{ fontSize: "0.9rem" }}>
-        git for hardware: every working board state is a commit. Tap one commit
-        to inspect or fork it, tap two to diff and plan a rollback.
+        git for hardware: every working board state is a commit. Pick a point on
+        the left; the right shows that state and what changed to reach it.
       </p>
 
       {error && <div className="banner error">{error}</div>}
 
-      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", margin: "0.75rem 0" }}>
-        <button
-          className="btn"
-          disabled={!pair || planLoading}
-          onClick={() => void loadPlan()}
-          style={{ opacity: !pair || planLoading ? 0.5 : 1 }}
-        >
-          {planLoading ? "Planning…" : "Rollback"}
-        </button>
-        <button
-          className="btn"
-          disabled={!single || forking}
-          onClick={() => void fork()}
-          style={{ opacity: !single || forking ? 0.5 : 1 }}
-        >
-          {forking ? "Forking…" : "Fork"}
-        </button>
-        {selected.length > 0 && (
-          <button
-            className="btn"
-            onClick={() => {
-              setSelected([]);
-              setPlan(null);
-            }}
-          >
-            Clear
-          </button>
-        )}
-      </div>
-
-      {plan && (
-        <div className="card">
-          <h2>Rollback plan</h2>
-          <p className="muted" style={{ fontSize: "0.85rem" }}>
-            Physical steps to revert {shortId(plan.fromId)} back to {shortId(plan.toId)}.
-            Removals come first.
-          </p>
-          <ol style={{ paddingLeft: "1.5rem", marginTop: "0.5rem" }}>
-            {plan.ops.map((op, i) => (
-              <li
-                key={`${op.op}-${op.edge.id}-${i}`}
-                className="mono"
-                style={{
-                  color: op.op === "remove" ? "var(--error)" : "var(--accent)",
-                  marginBottom: "0.25rem",
-                }}
-              >
-                {op.instruction}
-              </li>
-            ))}
-            <li className="mono" style={{ color: "var(--warn)" }}>
-              re-flash firmware {plan.targetFirmwareHash.slice(0, 12)}
-            </li>
-          </ol>
-        </div>
-      )}
-
-      {pair && pairDiff && (
-        <div className="card">
-          <h2>Diff</h2>
-          <p className="muted mono" style={{ fontSize: "0.75rem" }}>
-            {shortId(pair.older.id)} (fw {pair.older.firmware.hash.slice(0, 8)}) →{" "}
-            {shortId(pair.newer.id)} (fw {pair.newer.firmware.hash.slice(0, 8)})
-          </p>
-          <div style={{ margin: "0.75rem 0" }}>
-            <BoardView
-              netlist={pair.newer.netlist}
-              diffAgainst={pair.older.netlist}
-              firmware={firmwareBadgeFor(pair.newer)}
-            />
-            <p
-              className="muted"
-              style={{ fontSize: "0.75rem", textAlign: "center", marginTop: "0.25rem" }}
-            >
-              green = added in B · red dashed = removed since A · gray = unchanged
-            </p>
-          </div>
-          {pairDiff.added.length === 0 && pairDiff.removed.length === 0 ? (
-            <p className="muted" style={{ marginTop: "0.5rem" }}>
-              No netlist changes between these commits.
+      <div className="timeline-split">
+        {/* LEFT: the build progression */}
+        <aside className="timeline-rail">
+          <h2 style={{ fontSize: "0.8rem", color: "var(--muted)", marginBottom: "0.5rem" }}>
+            Progress ({commits.length})
+          </h2>
+          {!loaded ? (
+            <p className="muted">Loading…</p>
+          ) : newestFirst.length === 0 ? (
+            <p className="muted">
+              No commits yet. Finish a build on Assemble and commit it.
             </p>
           ) : (
-            <ul style={{ listStyle: "none", marginTop: "0.5rem" }}>
-              {pairDiff.added.map((e) => (
-                <li key={`a-${e.id}`} className="mono" style={{ color: "var(--accent)" }}>
-                  + {describeEdge(e)}
-                </li>
-              ))}
-              {pairDiff.removed.map((e) => (
-                <li key={`r-${e.id}`} className="mono" style={{ color: "var(--error)" }}>
-                  - {describeEdge(e)}
-                </li>
-              ))}
-            </ul>
-          )}
-          {(pair.older.photoDataUrl || pair.newer.photoDataUrl) && (
-            <div className="grid2" style={{ marginTop: "0.75rem" }}>
-              {[pair.older, pair.newer].map((c, i) => (
-                <figure key={c.id}>
-                  {c.photoDataUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={c.photoDataUrl}
-                      alt={`Board photo for commit ${shortId(c.id)}`}
-                      style={{
-                        maxWidth: "100%",
-                        borderRadius: 8,
-                        border: "1px solid var(--border)",
-                        display: "block",
-                      }}
-                    />
-                  ) : (
-                    <div
-                      className="muted"
-                      style={{
-                        border: "1px dashed var(--border)",
-                        borderRadius: 8,
-                        padding: "1.5rem 0.5rem",
-                        textAlign: "center",
-                        fontSize: "0.8rem",
-                      }}
+            <ol style={{ listStyle: "none", margin: 0, padding: 0 }}>
+              {newestFirst.map((c, i) => {
+                const isSel = c.id === selectedId;
+                const isCmp = compareTo?.id === c.id && !isSel;
+                return (
+                  <li key={c.id} style={{ position: "relative" }}>
+                    {i < newestFirst.length - 1 ? (
+                      <span
+                        aria-hidden
+                        style={{
+                          position: "absolute",
+                          left: 11,
+                          top: 26,
+                          bottom: -6,
+                          width: 2,
+                          background: "var(--border)",
+                        }}
+                      />
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => pick(c.id)}
+                      aria-current={isSel ? "true" : undefined}
+                      className={`timeline-node${isSel ? " is-selected" : ""}`}
                     >
-                      no photo
-                    </div>
-                  )}
-                  <figcaption className="muted" style={{ fontSize: "0.75rem", marginTop: "0.25rem" }}>
-                    {i === 0 ? "A (older)" : "B (newer)"} · {c.message}
-                  </figcaption>
-                </figure>
-              ))}
+                      <span
+                        aria-hidden
+                        className="timeline-dot"
+                        style={{
+                          background: isSel
+                            ? "var(--accent)"
+                            : isCmp
+                              ? "var(--warn)"
+                              : "var(--panel)",
+                          borderColor: isSel
+                            ? "var(--accent)"
+                            : isCmp
+                              ? "var(--warn)"
+                              : "var(--border)",
+                        }}
+                      />
+                      <span style={{ minWidth: 0, flex: 1 }}>
+                        <span style={{ display: "block", fontSize: "0.85rem" }}>
+                          {c.message}
+                        </span>
+                        <span
+                          className="muted mono"
+                          style={{ display: "block", fontSize: "0.68rem" }}
+                        >
+                          {formatWhen(c.createdAt)} · {c.branch} ·{" "}
+                          {shortId(c.id)}
+                          {isCmp ? " · comparing" : ""}
+                        </span>
+                      </span>
+                      {c.photoDataUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={c.photoDataUrl}
+                          alt=""
+                          width={38}
+                          height={28}
+                          style={{
+                            objectFit: "cover",
+                            borderRadius: 4,
+                            border: "1px solid var(--border)",
+                            flexShrink: 0,
+                          }}
+                        />
+                      ) : null}
+                    </button>
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+        </aside>
+
+        {/* RIGHT: the state at that point */}
+        <section className="timeline-detail">
+          {!selected ? (
+            <div className="card">
+              <p className="muted">Pick a point on the left to inspect it.</p>
             </div>
-          )}
-        </div>
-      )}
-
-      {single && (
-        <div className="card">
-          <h2>{single.message}</h2>
-          <p className="muted mono" style={{ fontSize: "0.75rem" }}>
-            {shortId(single.id)} · branch {single.branch} · fw{" "}
-            {single.firmware.hash.slice(0, 8)} · {formatWhen(single.createdAt)}
-          </p>
-          <div style={{ margin: "0.75rem 0" }}>
-            <BoardView
-              netlist={single.netlist}
-              firmware={firmwareBadgeFor(single)}
-            />
-          </div>
-          {single.netlist.edges.length === 0 ? (
-            <p className="muted" style={{ marginTop: "0.5rem" }}>
-              Empty board.
-            </p>
           ) : (
-            <ul style={{ listStyle: "none", marginTop: "0.5rem" }}>
-              {single.netlist.edges.map((e) => (
-                <li key={e.id} className="mono">
-                  {describeEdge(e)}
-                </li>
-              ))}
-            </ul>
-          )}
-          {single.photoDataUrl && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={single.photoDataUrl}
-              alt={`Board photo for commit ${shortId(single.id)}`}
-              style={{
-                maxWidth: "100%",
-                borderRadius: 8,
-                border: "1px solid var(--border)",
-                marginTop: "0.75rem",
-                display: "block",
-              }}
-            />
-          )}
-        </div>
-      )}
+            <>
+              <div className="card">
+                <h2 style={{ fontSize: "1rem", marginBottom: "0.2rem" }}>
+                  {selected.message}
+                </h2>
+                <p className="muted mono" style={{ fontSize: "0.75rem" }}>
+                  {shortId(selected.id)} · branch {selected.branch} · fw{" "}
+                  {selected.firmware.hash.slice(0, 8)} ·{" "}
+                  {formatWhen(selected.createdAt)}
+                </p>
 
-      {!loaded && <p className="muted">Loading commits…</p>}
-      {loaded && commits.length === 0 && !error && (
-        <div className="banner warn">No commits yet.</div>
-      )}
-
-      {newestFirst.map((c) => {
-        const sel = selected.indexOf(c.id);
-        return (
-          // The card is a div (with an inner selection button) rather than a
-          // button so the collapsible journal <details> stays valid HTML and
-          // toggling it never flips the commit selection.
-          <div
-            key={c.id}
-            className="card"
-            style={{
-              borderColor: sel >= 0 ? "var(--accent)" : "var(--border)",
-            }}
-          >
-            <button
-              onClick={() => toggle(c.id)}
-              style={{
-                width: "100%",
-                textAlign: "left",
-                cursor: "pointer",
-                font: "inherit",
-                color: "inherit",
-                display: "block",
-                background: "none",
-                border: "none",
-                padding: 0,
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  gap: "0.5rem",
-                  flexWrap: "wrap",
-                  alignItems: "center",
-                }}
-              >
-                <strong>{c.message}</strong>
-                <span style={{ display: "inline-flex", gap: "0.35rem" }}>
-                  <span
-                    className="badge"
-                    style={
-                      c.branch === "main"
-                        ? undefined
-                        : { borderColor: "var(--warn)", color: "var(--warn)" }
-                    }
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "0.4rem",
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                    margin: "0.5rem 0",
+                  }}
+                >
+                  <label className="muted" style={{ fontSize: "0.75rem" }}>
+                    compare to
+                  </label>
+                  <select
+                    value={compareId ?? ""}
+                    onChange={(e) => {
+                      setCompareId(e.target.value || null);
+                      setPlan(null);
+                    }}
+                    aria-label="Comparison target"
+                    style={{
+                      background: "var(--bg)",
+                      color: "var(--text)",
+                      border: "1px solid var(--border)",
+                      borderRadius: 6,
+                      padding: "0.25rem 0.4rem",
+                      fontSize: "0.75rem",
+                      maxWidth: 260,
+                    }}
                   >
-                    {c.branch}
-                  </span>
-                  {sel >= 0 && (
-                    <span
-                      className="badge"
-                      style={{ borderColor: "var(--accent)", color: "var(--accent)" }}
-                    >
-                      {sel === 0 ? "A" : "B"}
-                    </span>
+                    <option value="">
+                      {selected.parent
+                        ? "its parent (default)"
+                        : "nothing (this is the root)"}
+                    </option>
+                    {newestFirst
+                      .filter((c) => c.id !== selected.id)
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.message.slice(0, 40)} · {shortId(c.id)}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                <div style={{ margin: "0.5rem 0" }}>
+                  <BoardView
+                    netlist={selected.netlist}
+                    {...(compareTo ? { diffAgainst: compareTo.netlist } : {})}
+                    firmware={firmwareBadgeFor(selected)}
+                  />
+                  <p
+                    className="muted"
+                    style={{ fontSize: "0.72rem", textAlign: "center", marginTop: "0.25rem" }}
+                  >
+                    {compareTo
+                      ? "green = added since the comparison · red dashed = removed · gray = unchanged"
+                      : "the board as this commit left it"}
+                  </p>
+                </div>
+
+                {selected.netlist.edges.length === 0 ? (
+                  <p className="muted">Empty board.</p>
+                ) : null}
+
+                {selected.journal && selected.journal.length > 0 ? (
+                  <JournalList entries={selected.journal} />
+                ) : null}
+
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "0.5rem",
+                    flexWrap: "wrap",
+                    marginTop: "0.6rem",
+                  }}
+                >
+                  <button
+                    className="btn"
+                    disabled={forking}
+                    onClick={() => void fork()}
+                  >
+                    {forking ? "Forking…" : "Fork from here"}
+                  </button>
+                  <button
+                    className="btn"
+                    disabled={!compareTo || planLoading}
+                    style={{ opacity: !compareTo ? 0.5 : 1 }}
+                    onClick={() => void loadPlan()}
+                  >
+                    {planLoading ? "Planning…" : "Plan rollback to comparison"}
+                  </button>
+                </div>
+              </div>
+
+              {stateDiff && compareTo ? (
+                <div className="card">
+                  <h3 style={{ fontSize: "0.9rem" }}>
+                    What changed since {shortId(compareTo.id)}
+                  </h3>
+                  {stateDiff.added.length === 0 && stateDiff.removed.length === 0 ? (
+                    <p className="muted">
+                      Same wiring. Only the firmware differs
+                      {selected.firmware.hash === compareTo.firmware.hash
+                        ? " (and not even that)"
+                        : ""}
+                      .
+                    </p>
+                  ) : (
+                    <>
+                      {stateDiff.added.length > 0 ? (
+                        <ul style={{ paddingLeft: "1.1rem", color: "var(--accent)" }}>
+                          {stateDiff.added.map((e) => (
+                            <li key={`a-${e.id}`}>added {describeEdge(e)}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      {stateDiff.removed.length > 0 ? (
+                        <ul style={{ paddingLeft: "1.1rem", color: "var(--error)" }}>
+                          {stateDiff.removed.map((e) => (
+                            <li key={`r-${e.id}`}>removed {describeEdge(e)}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </>
                   )}
-                </span>
-              </div>
-              <div className="muted mono" style={{ fontSize: "0.75rem", marginTop: "0.25rem" }}>
-                {shortId(c.id)} · fw {c.firmware.hash.slice(0, 8)} ·{" "}
-                {c.netlist.edges.length} edge{c.netlist.edges.length === 1 ? "" : "s"} ·{" "}
-                {formatWhen(c.createdAt)}
-              </div>
-            </button>
-            {c.journal && c.journal.length > 0 ? (
-              <JournalList entries={c.journal} />
-            ) : null}
-          </div>
-        );
-      })}
+                </div>
+              ) : null}
+
+              {plan ? (
+                <div className="card">
+                  <h3 style={{ fontSize: "0.9rem" }}>
+                    Rollback: {shortId(plan.fromId)} → {shortId(plan.toId)}
+                  </h3>
+                  {plan.ops.length === 0 ? (
+                    <p className="muted">Nothing to undo physically.</p>
+                  ) : (
+                    <ol style={{ paddingLeft: "1.2rem" }}>
+                      {plan.ops.map((op, i) => (
+                        <li key={`${op.op}-${i}`} style={{ marginBottom: "0.25rem" }}>
+                          {op.instruction}
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+                  <p className="badge mono">
+                    then re-flash firmware {plan.targetFirmwareHash.slice(0, 8)}
+                  </p>
+                </div>
+              ) : null}
+            </>
+          )}
+        </section>
+      </div>
     </>
   );
 }
