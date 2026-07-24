@@ -10,16 +10,31 @@
 // Photo intake reuses the inventory raster pipeline (<= 1568 px JPEG).
 // Every exchange fire-and-forgets to /api/journal with the frame.
 
-import { useCallback, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
 import ArMarkerLayer from "@/components/ArMarkerLayer";
 import GuideArrow from "@/components/GuideArrow";
 import MaskOverlay from "@/components/MaskOverlay";
+import CaptureHistory, { type CaptureItem } from "@/components/CaptureHistory";
 import { markerFromBbox } from "@/lib/inventory/markers";
+import { photoFileUrl } from "@/lib/photos/contract";
 import {
   coachResponseSchema,
   truncateHistory,
   type CoachResponse,
 } from "@/lib/coach/contract";
+
+/** Shape of a stored coach photo as /api/photos?full=1 returns it. */
+interface StoredCoachPhoto {
+  id: string;
+  width: number;
+  height: number;
+  coach?: {
+    goal: string;
+    verdict: string;
+    instruction: string;
+    guide?: CoachResponse["guide"];
+  };
+}
 
 /** Photo export cap; vision docs recommend small long edges (docs/references-coach.md). */
 const MAX_EDGE = 1568;
@@ -172,6 +187,113 @@ export default function CoachPage() {
   const [history, setHistory] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pastAttempts, setPastAttempts] = useState<CaptureItem[]>([]);
+  const [selectedCaptureId, setSelectedCaptureId] = useState<string | null>(null);
+
+  // Load prior coach captures so a past attempt is one tap away.
+  const loadPastAttempts = useCallback(async () => {
+    try {
+      const res = await fetch("/api/photos");
+      if (!res.ok) return;
+      const data: unknown = await res.json();
+      const photos =
+        data && typeof data === "object" && "photos" in data
+          ? (data as { photos: CaptureItem[] }).photos
+          : [];
+      setPastAttempts(photos.filter((p) => p.surface === "coach"));
+    } catch {
+      /* history is a convenience; ignore load failures */
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadPastAttempts();
+  }, [loadPastAttempts]);
+
+  // Persist a fresh attempt: store the JPEG, then attach the coaching result.
+  const persistCapture = useCallback(
+    async (f: Frame, g: string, resp: CoachResponse) => {
+      try {
+        const created = await fetch("/api/photos", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            photoDataUrl: f.dataUrl,
+            width: f.w,
+            height: f.h,
+            surface: "coach",
+            label: g.slice(0, 60),
+          }),
+        });
+        if (!created.ok) return;
+        const { photo } = (await created.json()) as { photo: { id: string } };
+        await fetch(`/api/photos/${photo.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            coach: {
+              goal: g,
+              verdict: resp.verdict,
+              instruction: resp.instruction,
+              ...(resp.guide ? { guide: resp.guide } : {}),
+            },
+          }),
+        });
+        void loadPastAttempts();
+      } catch {
+        /* persistence is best-effort; a failed save never blocks coaching */
+      }
+    },
+    [loadPastAttempts],
+  );
+
+  // Reopen a stored attempt with its arrow and highlight intact, no API spend.
+  const recallCapture = useCallback(async (id: string) => {
+    setError(null);
+    try {
+      const res = await fetch("/api/photos?full=1");
+      const data = (await res.json()) as { photos: StoredCoachPhoto[] };
+      const found = data.photos.find((p) => p.id === id);
+      if (!found || !found.coach) {
+        setError("That saved attempt could not be reopened.");
+        return;
+      }
+      setSelectedCaptureId(id);
+      setGoal(found.coach.goal);
+      setFrame({ dataUrl: photoFileUrl(id), w: found.width, h: found.height });
+      // Rebuild a display-only response from the stored coaching result. The
+      // arrow and highlight come from the saved guide, so it looks identical
+      // to the live result without re-running vision.
+      const guide = found.coach.guide ?? null;
+      setResponse({
+        verdict: found.coach.verdict as CoachResponse["verdict"],
+        instruction: found.coach.instruction,
+        objects: [],
+        target: guide
+          ? { x: guide.to.x, y: guide.to.y, label: found.coach.goal.slice(0, 24) }
+          : null,
+        arrow: null,
+        guide,
+        confidence: 1,
+        note: "recalled from history",
+      });
+    } catch {
+      setError("That saved attempt could not be reopened.");
+    }
+  }, []);
+
+  const deleteCapture = useCallback(
+    async (id: string) => {
+      try {
+        await fetch(`/api/photos/${id}`, { method: "DELETE" });
+        if (selectedCaptureId === id) setSelectedCaptureId(null);
+        void loadPastAttempts();
+      } catch {
+        /* ignore */
+      }
+    },
+    [selectedCaptureId, loadPastAttempts],
+  );
 
   const submitFrame = useCallback(async (f: Frame, g: string) => {
     // A new goal starts a fresh session; the same goal after a reply is the
@@ -217,6 +339,8 @@ export default function CoachPage() {
       setResponse(parsed.data);
       lastResponseRef.current = parsed.data;
       journalExchange(g, nextAttempt, parsed.data.verdict, parsed.data.instruction, f.dataUrl);
+      // Persist the attempt so it can be reopened without re-shooting.
+      void persistCapture(f, g, parsed.data);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -327,6 +451,15 @@ export default function CoachPage() {
       </div>
 
       {error ? <div className="banner error">{error}</div> : null}
+
+      <CaptureHistory
+        title="Past attempts"
+        items={pastAttempts}
+        selectedId={selectedCaptureId}
+        onSelect={(id) => void recallCapture(id)}
+        onDelete={(id) => void deleteCapture(id)}
+        emptyHint="Photos you take here are saved with their guidance, so you can reopen an attempt without shooting it again."
+      />
 
       {response ? (
         response.verdict === "done" ? (

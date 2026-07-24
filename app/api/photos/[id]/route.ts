@@ -40,7 +40,10 @@ export async function PATCH(
     );
   }
   try {
-    const photo = await getPhotoStore().setInventory(id, parsed.data.inventory);
+    const store = getPhotoStore();
+    const photo = parsed.data.coach
+      ? await store.setCoach(id, parsed.data.coach)
+      : await store.setInventory(id, parsed.data.inventory!);
     return NextResponse.json({ photo });
   } catch (err) {
     if (err instanceof PhotoError) return photoErrorResponse(err);

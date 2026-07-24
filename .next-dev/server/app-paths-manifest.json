@@ -1,7 +1,3 @@
 {
-  "/api/commits/route": "app/api/commits/route.js",
-  "/api/images/[...path]/route": "app/api/images/[...path]/route.js",
-  "/timeline/page": "app/timeline/page.js",
-  "/coach/page": "app/coach/page.js",
-  "/assemble/page": "app/assemble/page.js"
+  "/timeline/page": "app/timeline/page.js"
 }

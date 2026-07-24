@@ -351,7 +351,9 @@ export default function InventoryPage() {
       const raw: unknown = await res.json();
       const parsed = photoListResponseSchema.safeParse(raw);
       if (!parsed.success) throw new Error("unexpected /api/photos response shape");
-      setMyPhotos(parsed.data.photos);
+      // Coach captures live in the same store now; keep them out of the
+      // inventory strip so each surface shows only its own history.
+      setMyPhotos(parsed.data.photos.filter((p) => p.surface !== "coach"));
       setPhotoLibNote(null);
     } catch (e) {
       setPhotoLibNote(

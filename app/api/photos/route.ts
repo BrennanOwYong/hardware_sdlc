@@ -9,7 +9,7 @@ import { getPhotoStore, PhotoError, type PhotoEntry } from "@/lib/photos/store";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function toMeta(entry: PhotoEntry): Omit<PhotoEntry, "inventory"> {
+function toMeta(entry: PhotoEntry): Omit<PhotoEntry, "inventory" | "coach"> {
   return {
     id: entry.id,
     capturedAt: entry.capturedAt,
@@ -18,6 +18,8 @@ function toMeta(entry: PhotoEntry): Omit<PhotoEntry, "inventory"> {
     height: entry.height,
     label: entry.label,
     mediaType: entry.mediaType,
+    // Surface is tiny and lets the history strips filter without ?full=1.
+    ...(entry.surface ? { surface: entry.surface } : {}),
   };
 }
 

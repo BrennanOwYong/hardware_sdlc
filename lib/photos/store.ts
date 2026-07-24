@@ -30,6 +30,29 @@ export const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 export const PHOTO_MEDIA_TYPES = ["image/jpeg", "image/png"] as const;
 export type PhotoMediaType = (typeof PHOTO_MEDIA_TYPES)[number];
 
+/** Which page captured this photo. Defaults to "inventory" for older records
+ *  written before the tag existed, so history stays valid across the upgrade. */
+export type CaptureSurface = "inventory" | "coach";
+
+/** The processing output of a coaching photo, kept so a past attempt can be
+ *  reopened with its arrow and highlight intact instead of re-shot. */
+export interface CoachCapture {
+  goal: string;
+  verdict: string;
+  instruction: string;
+  /** Mask-anchored guidance geometry, target mask included. Shape mirrors
+   *  lib/coach/geometry.ts PreciseGuide; kept structural to avoid importing
+   *  SDK-adjacent modules into this node-tested store. */
+  guide?: {
+    from: { x: number; y: number };
+    to: { x: number; y: number };
+    source: "mask" | "model";
+    targetMaskPng?: string;
+    targetBbox?: number[];
+    note: string;
+  };
+}
+
 export interface PhotoEntry {
   id: string;
   /** ISO timestamp of capture (server clock at save time). */
@@ -42,14 +65,22 @@ export interface PhotoEntry {
   label: string;
   /** Media type of the stored bytes; the file route serves it verbatim. */
   mediaType: PhotoMediaType;
+  /** Which surface captured it; absent on legacy records means "inventory". */
+  surface?: CaptureSurface;
   /** Cached identification, if the client PATCHed one on. */
   inventory?: Inventory;
+  /** Coach processing output, when this photo came from the coach page. */
+  coach?: CoachCapture;
 }
 
 export interface AddPhotoInput {
   photoDataUrl: string;
   width: number;
   height: number;
+  /** Which page captured it; defaults to inventory when omitted. */
+  surface?: CaptureSurface;
+  /** Override the auto "Bench HH:MM" label (coach uses the goal). */
+  label?: string;
   /** Test hook; defaults to now. */
   capturedAt?: Date;
 }
@@ -150,6 +181,8 @@ function isEntry(v: unknown): v is PhotoEntry {
     typeof v.height === "number" &&
     typeof v.label === "string" &&
     isMediaType(v.mediaType) &&
+    (v.surface === undefined || v.surface === "inventory" || v.surface === "coach") &&
+    (v.coach === undefined || isRecord(v.coach)) &&
     (v.inventory === undefined || isInventory(v.inventory))
   );
 }
@@ -283,8 +316,9 @@ export class PhotoStore {
         bytes: buffer.byteLength,
         width: input.width,
         height: input.height,
-        label: benchLabel(at),
+        label: input.label ?? benchLabel(at),
         mediaType,
+        ...(input.surface ? { surface: input.surface } : {}),
       };
       await mkdir(this.dirPath, { recursive: true });
       await writeFile(this.filePathFor(entry.id), buffer);
@@ -316,6 +350,22 @@ export class PhotoStore {
       }
       const { photoDataUrl: _photoDataUrl, ...rest } = inventory;
       entry.inventory = rest;
+      await this.save(file);
+      return entry;
+    });
+  }
+
+  /** Attaches a coaching result to a photo, so a past attempt reopens with its
+   *  arrow and highlight intact instead of being re-shot. */
+  setCoach(id: string, coach: CoachCapture): Promise<PhotoEntry> {
+    return this.enqueue(async () => {
+      const file = await this.load();
+      const entry = file.photos.find((p) => p.id === id);
+      if (!entry) {
+        throw new PhotoError(`photo ${id} not found`, 404);
+      }
+      entry.surface = "coach";
+      entry.coach = coach;
       await this.save(file);
       return entry;
     });
