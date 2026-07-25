@@ -386,12 +386,11 @@ export default function CheckPage() {
           <div className="card">
             <h3 style={{ fontSize: "0.9rem" }}>Next step</h3>
             <p style={{ marginBottom: "0.6rem" }}>{assessment.nextStep}</p>
+            {/* One honest onward move. The old buttons pointed at /builder and
+                /assemble, which are prototypes rather than shipped features. */}
             <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-              <Link className="btn btn-primary" href="/builder">
-                Plan the full build
-              </Link>
-              <Link className="btn" href="/assemble">
-                Practice the wiring
+              <Link className="btn btn-primary" href="/coach">
+                Get guided through it
               </Link>
             </div>
           </div>

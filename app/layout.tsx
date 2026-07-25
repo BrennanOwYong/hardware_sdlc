@@ -22,13 +22,14 @@ export default function RootLayout({
       <body>
         <nav className="nav">
           <span className="brand">Forge</span>
+          {/* Four features, named for what a person does rather than how the
+              system is built. /assemble, /builder and /bench stay reachable by
+              URL as prototypes but are deliberately not promoted here. */}
           <Link href="/">Home</Link>
-          <Link href="/inventory">Inventory</Link>
-          <Link href="/assemble">Assemble</Link>
-          <Link href="/timeline">Timeline</Link>
-          <Link href="/coach">Coach</Link>
-          <Link href="/check">Build something</Link>
-          <Link href="/builder">Builder</Link>
+          <Link href="/inventory">Find</Link>
+          <Link href="/check">Build</Link>
+          <Link href="/coach">Guide</Link>
+          <Link href="/timeline">History</Link>
         </nav>
         <main>{children}</main>
       </body>

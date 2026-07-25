@@ -1,50 +1,54 @@
 import Link from "next/link";
 
+// Four features, and only four. Anything not on this list is either a
+// prototype reachable by URL or was cut; the home page promotes nothing that
+// does not work.
+const FEATURES = [
+  {
+    href: "/inventory",
+    title: "Find a part",
+    body: "Photograph your bench and search it like a document. Ask for a resistor and the resistor lights up — its own pixels, not a box near it.",
+    cta: "Search the bench",
+  },
+  {
+    href: "/check",
+    title: "Say what you want to build",
+    body: "Describe the thing in plain words. Forge works out the parts, checks them against your photo, and tells you exactly what is still missing and where to buy it.",
+    cta: "Check what you need",
+  },
+  {
+    href: "/coach",
+    title: "Get guided",
+    body: "Point the camera at your hands. Forge marks the exact hole to aim for and draws the line from the wire to it, then tells you how to move when you are off.",
+    cta: "Start guidance",
+  },
+  {
+    href: "/timeline",
+    title: "Keep every working build",
+    body: "Each state that works becomes a revision: the wiring, the firmware, the photo. Compare two, see what changed on the board, and roll back.",
+    cta: "Open history",
+  },
+];
+
 export default function HomePage() {
   return (
     <>
       <h1>Forge</h1>
       <p className="muted">
-        Vibe coding for hardware: see your parts, get guided through wiring,
-        and version every working build.
+        A camera that understands your workbench: it finds your parts, tells you
+        what you still need, guides your hands, and remembers every build that
+        worked.
       </p>
-      <div style={{ margin: "1rem 0" }}>
-        <Link href="/assemble?demo=auto" className="btn btn-primary">
-          Run 90-second demo
-        </Link>
-      </div>
-      <div className="grid2">
-        <div className="card">
-          <h2>Ctrl-F for real life</h2>
-          <p className="muted">
-            Photograph your workspace and get a named part inventory you can
-            search; ask for a part and Forge highlights it in the photo.
-          </p>
-          <Link href="/inventory" className="btn">
-            Open Inventory
-          </Link>
-        </div>
-        <div className="card">
-          <h2>Guided assembly</h2>
-          <p className="muted">
-            Live video watches each wire: touch the right target, hear
-            &quot;Correct - push it in now&quot;, and firmware is generated from
-            the pins Forge observed.
-          </p>
-          <Link href="/assemble" className="btn">
-            Open Assemble
-          </Link>
-        </div>
-        <div className="card">
-          <h2>Git for hardware</h2>
-          <p className="muted">
-            Every working state becomes a commit with photo, netlist, and
-            firmware hash; diff builds, roll back, or fork a variant.
-          </p>
-          <Link href="/timeline" className="btn">
-            Open Timeline
-          </Link>
-        </div>
+      <div className="grid2" style={{ marginTop: "1rem" }}>
+        {FEATURES.map((f) => (
+          <div className="card" key={f.href}>
+            <h2>{f.title}</h2>
+            <p className="muted">{f.body}</p>
+            <Link href={f.href} className="btn">
+              {f.cta}
+            </Link>
+          </div>
+        ))}
       </div>
     </>
   );

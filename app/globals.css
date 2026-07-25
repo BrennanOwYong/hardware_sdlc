@@ -280,3 +280,60 @@ p {
   position: relative;
   z-index: 1;
 }
+
+/* Guided assembly split: circuit stage on the left, steps scrolling on their
+   own on the right. Stacks on phones so the board is never squeezed. */
+.assemble-split {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+@media (min-width: 900px) {
+  .assemble-split {
+    grid-template-columns: 1fr minmax(280px, 340px);
+    align-items: start;
+  }
+  .assemble-stage {
+    position: sticky;
+    top: 1rem;
+  }
+  /* The steps column scrolls independently of the board beside it. */
+  .assemble-steps {
+    max-height: calc(100vh - 2rem);
+    overflow-y: auto;
+    padding-right: 2px;
+  }
+}
+/* Before/after boards sit side by side once there is room for both. */
+.assemble-ba {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.6rem;
+}
+@media (min-width: 620px) {
+  .assemble-ba {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.assemble-step {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 0.4rem 0.5rem;
+  margin-bottom: 0.25rem;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.assemble-step:hover {
+  background: var(--panel);
+}
+.assemble-step.is-active {
+  background: rgba(34, 197, 94, 0.1);
+  border-color: var(--accent);
+}
