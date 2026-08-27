@@ -8,4 +8,5 @@
 .snap-section{display:block;min-height:calc(100svh - 62px);padding-block:clamp(72px,10vh,120px)}.hero.snap-section{display:grid;align-items:center;padding-block:90px 112px}.proof.snap-section,.video-band.snap-section{display:grid}.intro-grid,.surfaces-head{align-items:start}.intro-grid h2{max-width:760px}.surfaces-head{gap:48px}.surfaces-head h2{max-width:520px}
 .intro.snap-section{min-height:0;padding-block:clamp(72px,10vh,100px) 88px}
 .intro.snap-section{padding-bottom:28px}.proof.snap-section{padding-top:28px}
+.proof.snap-section{padding-bottom:28px}.surfaces.snap-section{padding-top:28px}
 @media(max-width:760px){.snap-section{padding-block:72px}.hero.snap-section{padding-block:60px 88px}.proof.snap-section,.video-band.snap-section{display:grid}}
