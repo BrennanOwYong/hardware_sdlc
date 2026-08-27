@@ -60,10 +60,25 @@
       <section class="closing section-shell"><p class="eyebrow">Open prototype · built by Brennan Ow Yong</p><h2>Go from “I think this is right”<br />to <em>“I know why it works.”</em></h2><a class="button button-light" href="https://github.com/BrennanOwYong/hardware_sdlc">Read the source <span>↗</span></a></section>
     </main>
     <footer class="site-footer section-shell"><a class="wordmark" href="#top"><span class="mark">✦</span> forge</a><span>Vibe coding for hardware.</span><span>© 2026</span></footer>
+    <script src="https://cdn.jsdelivr.net/npm/animejs/dist/bundles/anime.umd.min.js"></script>
     <script>
+      const { animate } = anime;
       const slides = [...document.querySelectorAll('.carousel-slide')];
       let current = 0;
-      const showSlide = (next) => { current = (next + slides.length) % slides.length; slides.forEach((slide, index) => slide.classList.toggle('is-active', index === current)); };
+      let isAnimating = false;
+      const settleSlide = (slide) => { slide.classList.remove('is-active'); slide.style.zIndex = ''; slide.style.opacity = ''; slide.style.transform = ''; };
+      const showSlide = (next) => {
+        if (isAnimating || next === current) return;
+        isAnimating = true;
+        const outgoing = slides[current];
+        const incoming = slides[(next + slides.length) % slides.length];
+        incoming.classList.add('is-active');
+        incoming.style.zIndex = '3';
+        outgoing.style.zIndex = '2';
+        animate(incoming, { translateY: [-120, 0], opacity: [0, 1], duration: 760, ease: 'out(3)' });
+        animate(outgoing, { translateY: [0, 20], opacity: [1, 0], duration: 520, ease: 'in(2)', onComplete: () => { settleSlide(outgoing); current = (next + slides.length) % slides.length; isAnimating = false; } });
+      };
+      animate(slides[0], { translateY: [-70, 0], opacity: [0, 1], duration: 700, ease: 'out(3)' });
       document.querySelector('.carousel-button.next').addEventListener('click', () => showSlide(current + 1));
       document.querySelector('.carousel-button.previous').addEventListener('click', () => showSlide(current - 1));
       setInterval(() => showSlide(current + 1), 6500);
