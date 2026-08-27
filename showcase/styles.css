@@ -10,3 +10,4 @@
 .intro.snap-section{padding-bottom:28px}.proof.snap-section{padding-top:28px}
 .proof.snap-section{padding-bottom:28px}.surfaces.snap-section{padding-top:28px}
 @media(max-width:760px){.snap-section{padding-block:72px}.hero.snap-section{padding-block:60px 88px}.proof.snap-section,.video-band.snap-section{display:grid}}
+.video-tag{position:static!important;display:inline-block;margin-top:12px}

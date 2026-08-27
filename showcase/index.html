@@ -55,7 +55,7 @@
         </div>
       </section>
 
-      <section class="video-band section-shell snap-section" data-stage="commit"><div class="video-copy"><div class="section-kicker">04 / In motion</div><h2>The loop is<br /><em>the product.</em></h2><p>Real camera footage. Real placement. A tiny moment where the interface and the physical world agree.</p></div><div class="video-wrap"><video controls muted loop poster="media/bench.jpg"><source src="media/wiring.MOV" type="video/quicktime" />Your browser does not support video playback.</video><span class="video-tag">WIRING PRACTICE / 00:18</span></div></section>
+      <section class="video-band section-shell snap-section" data-stage="commit"><div class="video-copy"><div class="section-kicker">04 / In motion</div><h2>The loop is<br /><em>the product.</em></h2><p>Hey Forge, how do I plug my USB into my laptop? This is a simple use case but it shows the pwoer of realtime understanding.</p></div><div class="video-wrap"><video controls muted loop poster="media/bench.jpg"><source src="media/wiring.MOV" type="video/quicktime" />Your browser does not support video playback.</video><span class="video-tag">WIRING PRACTICE / 00:18</span></div></section>
 
       <section class="closing section-shell"><p class="eyebrow">Open prototype · built by Brennan Ow Yong</p><h2>Go from “I think this is right”<br />to <em>“I know why it works.”</em></h2><a class="button button-light" href="https://github.com/BrennanOwYong/hardware_sdlc">Read the source <span>↗</span></a></section>
     </main>
@@ -87,6 +87,16 @@
       const observer = new IntersectionObserver((entries) => entries.forEach((entry) => { if (!entry.isIntersecting) return; labels.forEach((label) => label.classList.toggle('is-active', label.dataset.stageLabel === entry.target.dataset.stage)); }), { rootMargin: '-45% 0px -45% 0px' });
       document.querySelectorAll('[data-stage]').forEach((section) => observer.observe(section));
       document.querySelectorAll('a[href^="#"]').forEach((link) => link.addEventListener('click', (event) => { const target = document.querySelector(link.getAttribute('href')); if (!target) return; event.preventDefault(); target.scrollIntoView({ behavior: 'smooth', block: 'start' }); }));
+    </script>
+    <script>
+      const wiringVideo = document.querySelector('.video-wrap video');
+      if (wiringVideo) {
+        wiringVideo.controls = false;
+        wiringVideo.autoplay = true;
+        wiringVideo.muted = true;
+        wiringVideo.playsInline = true;
+        wiringVideo.play().catch(() => {});
+      }
     </script>
   </body>
 </html>
