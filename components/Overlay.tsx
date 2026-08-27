@@ -1,7 +1,7 @@
 "use client";
 
 // Canvas overlay for live modes: absolutely positioned over a <video>
-// element, drawing the same visual states as BoardView at normalized
+// element, drawing the same visual states as the wireframe at normalized
 // coordinates (StepTarget x/y in 0..1 map to the video's rendered size).
 // The parent container must be position:relative with the <video> filling it.
 //

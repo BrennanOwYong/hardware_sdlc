@@ -12,7 +12,6 @@ import {
   isSampleFastPath,
   SAMPLE_FAST_PATH_NOTE,
   segmentImage,
-  type SamBox,
 } from "@/lib/perception/sam";
 import {
   identifyRequestSchema,
@@ -23,21 +22,13 @@ import {
 } from "@/lib/inventory/contract";
 // Prompt text lives in lib/inventory/prompts.ts so node --test can import the
 // builders directly (Next.js route files reject extra exports at build time).
-import { buildRegionPrompt, buildVisionPrompt } from "@/lib/inventory/prompts";
+import { buildVisionPrompt } from "@/lib/inventory/prompts";
+import { snapDetectionsToRegions, snapNote } from "@/lib/perception/snap";
 
 const MODEL = "claude-sonnet-5";
 
 const RETRY_PROMPT =
   "Your previous reply was not a valid JSON array matching the required schema. Reply again with ONLY the JSON array — no prose, no markdown, no code fences.";
-
-const regionLabelSchema = z.object({
-  region: z.number().int().min(1),
-  partType: z.string().min(1),
-  label: z.string().min(1),
-  confidence: z.number().min(0).max(1),
-});
-const regionLabelsSchema = z.array(regionLabelSchema).min(1);
-type RegionLabel = z.infer<typeof regionLabelSchema>;
 
 const rawDetectionSchema = z.object({
   partType: z.string().min(1),
@@ -163,95 +154,6 @@ async function detectWithRetry(
   throw new Error("model returned invalid JSON twice");
 }
 
-function parseRegionLabels(text: string): RegionLabel[] | null {
-  const start = text.indexOf("[");
-  const end = text.lastIndexOf("]");
-  if (start === -1 || end === -1 || end <= start) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text.slice(start, end + 1));
-  } catch {
-    return null;
-  }
-  const result = regionLabelsSchema.safeParse(parsed);
-  return result.success ? result.data : null;
-}
-
-/** One vision call labeling SAM's numbered regions; one retry on bad JSON. */
-async function labelRegionsWithRetry(
-  client: Anthropic,
-  image: ParsedImage,
-  prompt: string,
-): Promise<RegionLabel[]> {
-  const imageBlock: Anthropic.ImageBlockParam = {
-    type: "image",
-    source: {
-      type: "base64",
-      media_type: image.mediaType,
-      data: image.data,
-    },
-  };
-  const firstTurn: Anthropic.MessageParam = {
-    role: "user",
-    content: [imageBlock, { type: "text", text: prompt }],
-  };
-
-  const first = await client.messages.create({
-    model: MODEL,
-    max_tokens: 4096,
-    thinking: { type: "disabled" },
-    messages: [firstTurn],
-  });
-  const firstText = textOf(first);
-  const firstParse = parseRegionLabels(firstText);
-  if (firstParse) return firstParse;
-
-  const second = await client.messages.create({
-    model: MODEL,
-    max_tokens: 4096,
-    thinking: { type: "disabled" },
-    messages: [
-      firstTurn,
-      { role: "assistant", content: firstText || "(empty reply)" },
-      { role: "user", content: RETRY_PROMPT },
-    ],
-  });
-  const secondParse = parseRegionLabels(textOf(second));
-  if (secondParse) return secondParse;
-
-  throw new Error("model returned invalid JSON twice");
-}
-
-/**
- * Join labels to SAM boxes: drop "ignore" and out-of-range region numbers,
- * keep the first label per region, use SAM's tight bbox for every part.
- */
-function partsFromRegionLabels(
-  labels: RegionLabel[],
-  boxes: SamBox[],
-): PartDetection[] {
-  const seen = new Set<number>();
-  const parts: PartDetection[] = [];
-  for (const label of labels) {
-    if (label.partType === "ignore") continue;
-    if (label.region < 1 || label.region > boxes.length) continue;
-    if (seen.has(label.region)) continue;
-    seen.add(label.region);
-    const box = boxes[label.region - 1];
-    parts.push({
-      id: `p${parts.length + 1}`,
-      partType: label.partType,
-      label: label.label,
-      confidence: clamp01(label.confidence),
-      bbox: box.bbox,
-      // Each part carries its region's compact mask when the payload cap
-      // kept it; the client halo-falls-back on parts without one.
-      ...(box.maskPng !== undefined ? { maskPng: box.maskPng } : {}),
-    });
-  }
-  return parts;
-}
-
 export async function POST(
   req: Request,
 ): Promise<NextResponse<IdentifyResponse | IdentifyError>> {
@@ -328,28 +230,41 @@ export async function POST(
         samNote =
           "sam found no usable regions in this frame — used vision-only identification.";
       } else {
-        const labels = await labelRegionsWithRetry(
+        // Name-then-snap. The model reads the picture and says what it sees
+        // and roughly where; we then snap each label onto the region it
+        // actually overlaps and take SAM's tight bbox and mask for position.
+        //
+        // The previous approach asked the model to map objects onto a text
+        // list of numbered boxes it could not see, and that mapping is what
+        // put correct masks under wrong names — the reason labels landed far
+        // from the objects they described.
+        const detections = await detectWithRetry(
           client,
           image,
-          buildRegionPrompt(seg.boxes, query),
+          buildVisionPrompt(query),
         );
-        const parts = partsFromRegionLabels(labels, seg.boxes);
-        if (parts.length > 0) {
+        const snapped = snapDetectionsToRegions(
+          detections.map((d) => ({
+            partType: d.partType,
+            label: d.label,
+            confidence: clamp01(d.confidence),
+            bbox: normalizeBbox(d.bbox, imageWidth, imageHeight),
+          })),
+          seg.boxes,
+        );
+        if (snapped.parts.length > 0) {
           const inventory: Inventory = {
-            parts,
+            parts: snapped.parts,
             capturedAt: new Date().toISOString(),
             source: "vlm",
           };
-          const maskedCount = parts.filter(
-            (p) => p.maskPng !== undefined,
-          ).length;
           return NextResponse.json({
             inventory,
-            note: `sam+vlm: ${seg.boxes.length} regions, ${parts.length} labeled, masks on ${maskedCount} parts`,
+            note: snapNote(seg.boxes.length, snapped),
           });
         }
         samNote =
-          "sam+vlm labeled every region as ignore — used vision-only identification.";
+          "the vision pass named nothing in this frame — used vision-only identification.";
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

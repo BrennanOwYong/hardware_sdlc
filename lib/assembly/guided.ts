@@ -32,6 +32,13 @@ export interface GuidedStep {
   instruction: string;
   /** What the user should see or feel when the step is right. */
   checkDetail: string;
+  /** What this connection accomplishes electrically, in plain words. Without
+   *  it a step list is a set of orders; with it, it teaches the circuit. */
+  why: string;
+  /** True when the app can confirm this itself (a compiler result, a device
+   *  handshake). Everything else is a human observation, and a "mark done"
+   *  tickbox for it records a claim nobody checked. */
+  agentCheckable?: boolean;
   /** Legend part ids this step uses. */
   parts: string[];
   /** Ids of steps that MUST be done first. Empty means order-free. */
@@ -103,7 +110,8 @@ export const GUIDED_STEPS: GuidedStep[] = [
     kind: "wire",
     title: "Ground the breadboard",
     instruction:
-      "Push one end of a black jumper into the Uno's GND pin, and the other end into the blue rail running along the breadboard.",
+      "Push one end of a black jumper wire into the pin marked GND on the Uno's top row of sockets. Push the other end into any hole on the blue-striped rail running along the bottom edge of the breadboard.",
+    why: "Every part of a circuit needs a shared return path. This wire makes the whole blue rail count as the Uno's ground, so later steps can reach ground from anywhere on the board instead of running their own wire back to the Uno.",
     checkDetail: "Both ends sit flush; a gentle tug does not pull them out.",
     parts: ["uno", "breadboard", "wire-black"],
     dependsOn: [],
@@ -115,7 +123,8 @@ export const GUIDED_STEPS: GuidedStep[] = [
     kind: "component",
     title: "Seat the LED",
     instruction:
-      "Push the LED into the breadboard so its long leg lands in row 5 and its short leg in row 6. The long leg is the positive side.",
+      "Push the LED's long leg into row 5, hole f, and its short leg into row 6, hole f. Both holes are on the same side of the groove down the middle of the board.",
+    why: "An LED only passes current one way. Its long leg is the entrance and its short leg the exit, so putting them in two different rows means the current has to travel through the LED to get from row 5 to row 6 rather than around it.",
     checkDetail: "The two legs sit in different rows; sharing a row would short it out.",
     parts: ["led", "breadboard"],
     dependsOn: [],
@@ -127,7 +136,8 @@ export const GUIDED_STEPS: GuidedStep[] = [
     kind: "component",
     title: "Add the resistor",
     instruction:
-      "Bridge the LED's short-leg row (row 6) to the blue ground rail with the 220Ω resistor.",
+      "Put one leg of the 220Ω resistor into row 6, hole h — the same row as the LED's short leg — and the other leg into any hole on the blue ground rail.",
+    why: "The Uno's pin pushes 5V, which is far more than an LED can survive on its own. The resistor sits in the LED's exit path and throttles the current to a safe level. This is why it must exist before the pin is connected in the next step.",
     checkDetail: "The resistor spans from row 6 to the blue rail, not across the LED itself.",
     parts: ["resistor", "breadboard"],
     // Physical: it bridges the row the LED's cathode sits in.
@@ -140,10 +150,14 @@ export const GUIDED_STEPS: GuidedStep[] = [
     kind: "wire",
     title: "Wire the LED to pin 13",
     instruction:
-      "Run the red jumper from the Uno's pin D13 to row 5, the row holding the LED's long leg.",
-    checkDetail: "The wire reaches the long-leg row only; nothing else shares it.",
+      "Run the red jumper wire from the Uno's pin D13 to row 5, hole h — the same row as the LED's long leg.",
+    why: "This is the switch the code operates. When the sketch sets D13 high, 5V arrives in row 5, crosses the LED, passes through the resistor and reaches ground: a complete loop, and the LED lights.",
+    checkDetail: "The wire lands in row 5 on the same side of the groove as the LED's long leg.",
     parts: ["uno", "wire-red"],
-    dependsOn: [],
+    // Not authoring order: a driven 5V pin wired to an LED that has no series
+    // resistor yet can destroy the LED the moment the board gets power. The
+    // current limit has to exist before the current source does.
+    dependsOn: ["r1"],
     edge: wire("w2", "UNO:D13", "BB:5:h", "jumper (red)"),
   },
   {
@@ -152,19 +166,24 @@ export const GUIDED_STEPS: GuidedStep[] = [
     kind: "component",
     title: "Seat the button",
     instruction:
-      "Straddle the pushbutton across the breadboard's centre channel so its legs land in rows 15 and 17.",
-    checkDetail: "The button sits flat and does not rock when pressed.",
+      "Sit the pushbutton so it straddles the groove down the middle of the board, with one pair of legs in row 15 and the other pair in row 17. Press until it clicks flat.",
+    why: "The button's job is to join the two sides of the groove when you press it. Its legs are already joined in pairs inside the plastic — the two on the left are one terminal, the two on the right are the other — so straddling the groove is what puts a gap in the circuit for the button to close.",
+    checkDetail: "The button sits flat and does not rock. Its legs land on both sides of the groove.",
     parts: ["button", "breadboard"],
     dependsOn: [],
-    edge: component("c2", "BB:15:e", "BB:17:e", "pushbutton"),
+    // The connection the button MAKES is across the groove, row 15 left to row
+    // 15 right. The legs in row 17 are the same two terminals seen again.
+    edge: component("c2", "BB:15:e", "BB:15:f", "pushbutton"),
   },
   {
     id: "w3",
     index: 6,
     kind: "wire",
     title: "Wire the button to pin 2",
-    instruction: "Run the yellow jumper from the Uno's pin D2 to row 15.",
-    checkDetail: "The wire lands in the same row as one button leg.",
+    instruction:
+      "Run the yellow jumper wire from the Uno's pin D2 to row 15, hole a — the left-hand side of the row the button sits in.",
+    why: "This lets the Uno watch one side of the button. On its own the pin sees nothing useful; the next step gives it something to compare against.",
+    checkDetail: "The wire is on the same side of the groove as the button's left legs.",
     parts: ["uno", "wire-yellow"],
     dependsOn: [],
     edge: wire("w3", "UNO:D2", "BB:15:a", "jumper (yellow)"),
@@ -173,12 +192,15 @@ export const GUIDED_STEPS: GuidedStep[] = [
     id: "w4",
     index: 7,
     kind: "wire",
-    title: "Ground the button",
-    instruction: "Run the second black jumper from row 17 to the blue ground rail.",
-    checkDetail: "Pressing the button now connects row 15 to ground through the switch.",
+    title: "Ground the other side of the button",
+    instruction:
+      "Run the second black jumper wire from row 15, hole j — the RIGHT-hand side of the button's row, across the groove from the yellow wire — to any hole on the blue ground rail.",
+    why: "This is the half that makes the button mean something. Pin D2 holds itself high until something pulls it low; pressing the button joins the left side to this grounded right side, so the pin drops and the code knows you pressed it. Both wires must be on OPPOSITE sides of the groove — put them on the same side and the pin is grounded permanently, so the board behaves as though the button were held down forever.",
+    checkDetail:
+      "Trace it with a finger: yellow enters the row on the a-e side, black leaves it on the f-j side, and only the button bridges them.",
     parts: ["wire-black", "breadboard"],
     dependsOn: [],
-    edge: wire("w4", "BB:17:a", "BB:RAIL:GND", "jumper (black)"),
+    edge: wire("w4", "BB:15:j", "BB:RAIL:GND", "jumper (black)"),
   },
   {
     id: "power",
@@ -187,24 +209,28 @@ export const GUIDED_STEPS: GuidedStep[] = [
     title: "Plug in the USB cable",
     instruction:
       "Connect the Uno to your laptop with the USB cable. The board's power light should come on.",
+    why: "The USB cable does two jobs: it powers the board, and it is the road your code travels to reach it. Nothing before this point has any voltage on it, which is why the wiring is safe to rearrange until now.",
     checkDetail: "A small green light on the Uno stays lit.",
     parts: ["usb", "uno"],
     // Everything must be in place before power reaches the circuit.
     dependsOn: ["w1", "c1", "r1", "w2", "c2", "w3", "w4"],
+    agentCheckable: true,
   },
   {
     id: "flash",
     index: 9,
     kind: "flash",
-    title: "Send the code to the board",
+    title: "Put the code on the board",
     instruction:
-      "Forge wrote this sketch from the pins it watched you wire. Press Inject code to compile it and send it to the Uno.",
+      "Forge wrote this sketch from the pins you wired: D2 for the button, D13 for the LED. Writing it compiles the sketch and sends it to the Uno.",
+    why: "The wiring decides what CAN happen; the code decides what DOES. This sketch reads D2 continuously and mirrors it onto D13, which is the behaviour the wiring was built to allow.",
     checkDetail: "The compiler reports how many bytes the sketch uses, with no errors.",
     parts: ["uno", "usb"],
     // The firmware names D2 and D13, so those wires must exist first.
     dependsOn: ["w2", "w3", "power"],
     code: SKETCH,
     pins: ["UNO:D2", "UNO:D13", "UNO:GND"],
+    agentCheckable: true,
   },
   {
     id: "verify",
@@ -212,11 +238,19 @@ export const GUIDED_STEPS: GuidedStep[] = [
     kind: "verify",
     title: "Press the button",
     instruction: "Hold the pushbutton down. The LED should light while you hold it.",
+    why: "This closes the loop you built: your finger joins the button's two sides, D2 drops to ground, the sketch sees it and drives D13 high, and current runs through the LED and resistor back to the same ground the first wire established.",
     checkDetail: "The LED lights on press and goes dark on release.",
     parts: ["button", "led"],
     dependsOn: ["flash"],
   },
 ];
+
+/**
+ * The circuit in one paragraph, for someone who wants to know why any of this
+ * works before following orders about it.
+ */
+export const CIRCUIT_STORY =
+  "Two loops share one ground. The output loop runs from pin D13 through the LED, through the resistor that keeps the current safe, and back to ground. The input loop holds pin D2 high until the button connects it to that same ground. The sketch watches D2 and copies it to D13, so pressing the button lights the LED.";
 
 /**
  * Group steps into waves: everything in a wave has its dependencies met by
@@ -254,17 +288,33 @@ export function waveIndexById(steps: readonly GuidedStep[]): Map<string, number>
 }
 
 /**
- * The circuit BEFORE a step: every edge from steps that must already be done.
- * Dependencies alone are too thin (most steps have none), so "before" means
- * every step earlier in the listed order, which is how a person reading the
- * list top to bottom would have built it.
+ * The order the UI actually presents steps in: wave by wave, and within a wave
+ * the order they are listed.
+ *
+ * The authoring order in GUIDED_STEPS is not this order. It reads
+ * w1, c1, r1, w2, c2… because that is how the circuit was written down, while
+ * the waves put c2 in group 1 and r1 in group 2. Walking the authored array to
+ * build a before-state therefore showed the resistor as already fitted on a
+ * step that comes BEFORE the resistor on screen — a picture that contradicted
+ * the list beside it.
+ */
+export function presentationOrder(steps: readonly GuidedStep[]): GuidedStep[] {
+  return computeWaves(steps).flat();
+}
+
+/**
+ * The circuit BEFORE a step: every edge from steps that come earlier on screen.
+ *
+ * Dependencies alone are too thin — most steps have none — so "before" means
+ * everything earlier in presentation order, which is what a person working
+ * down the list would have in front of them.
  */
 export function netlistBefore(
   steps: readonly GuidedStep[],
   stepId: string,
 ): Netlist {
   const edges: NetlistEdge[] = [];
-  for (const s of steps) {
+  for (const s of presentationOrder(steps)) {
     if (s.id === stepId) break;
     if (s.edge) edges.push(s.edge);
   }

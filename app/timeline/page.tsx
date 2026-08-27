@@ -6,7 +6,7 @@
 //     list of the coach steps and flash events drained into it, with coach
 //     frames as thumbnails (via /api/images) and firmware-hash badges
 //   - commit-state diagram (FEEDBACK 14): one selected commit renders its
-//     hole-precise netlist on BoardView with a firmware badge; two selected
+//     hole-precise netlist on the shared wireframe; two selected
 //     render ONE diagram in diff mode next to the existing sentence list
 // Guards below re-check API payload shapes because lib/vcs/store.ts (which
 // owns the server-side guards) imports node builtins and cannot be bundled
@@ -14,9 +14,84 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { BuildCommit, JournalEntry, NetlistEdge } from "@/lib/types";
-import { describeEdge, diff, type RollbackOp } from "@/lib/vcs/diff";
+import { diff } from "@/lib/vcs/diff";
+import { changeSentence, diffHeadline, plainPlan } from "@/lib/vcs/plain";
+import { buildTree, routeSummary, switchCost } from "@/lib/vcs/graph";
+import CommitTreeView from "@/components/CommitTree";
 import { pinsUsedFromNetlist } from "@/lib/diagram/selectors";
-import BoardView from "@/components/BoardView";
+import Wireframe from "@/components/Wireframe";
+import { specById } from "@/lib/devices/catalog";
+import {
+  autoPlace,
+  connectionEnds,
+  layoutProject,
+  type Placement,
+  type ProjectLayout,
+} from "@/lib/devices/layout";
+
+// A commit records the wiring, not the bench. Commits written before devices
+// were part of the model fall back to the pair this project has always
+// assumed, so old history still renders instead of vanishing.
+const FALLBACK_SPECS = ["bb-400", "uno-r3"];
+
+function placementsFor(commit: BuildCommit): Placement[] {
+  if (commit.devices && commit.devices.length > 0) return commit.devices;
+  return autoPlace(FALLBACK_SPECS, specById);
+}
+
+/** Turns a ref into words. Used by every sentence on this page, so the
+ *  history speaks about the same holes the wireframe draws. */
+function namerFor(layout: ProjectLayout) {
+  return (ref: string) => connectionEnds(layout, ref, ref).from;
+}
+
+/**
+ * The bench for one commit: the wiring is history and cannot be edited, but
+ * the board can be dragged and zoomed, because reading a diagram is not the
+ * same act as changing it.
+ */
+function CommitBench({
+  commit,
+  compareTo,
+}: {
+  commit: BuildCommit;
+  compareTo: BuildCommit | null;
+}) {
+  const [placements, setPlacements] = useState<Placement[]>(() =>
+    placementsFor(commit),
+  );
+  useEffect(() => setPlacements(placementsFor(commit)), [commit]);
+  const layout = useMemo(() => layoutProject(placements, specById), [placements]);
+  const move = useCallback((instanceId: string, xMm: number, yMm: number) => {
+    setPlacements((prev) =>
+      prev.map((p) => (p.instanceId === instanceId ? { ...p, xMm, yMm } : p)),
+    );
+  }, []);
+  return (
+    <>
+      <Wireframe
+        layout={layout}
+        netlist={commit.netlist}
+        mode="view"
+        allowDeviceDrag
+        {...(compareTo ? { diffAgainst: compareTo.netlist } : {})}
+        onMoveDevice={move}
+      />
+      <p className="muted" style={{ fontSize: "0.7rem", margin: "0.3rem 0 0" }}>
+        Scroll to zoom · drag the board to move it · drag the background to pan
+      </p>
+      <div className="fg-fw-badge">
+        <span className="muted">built on</span>
+        {layout.devices.map((d) => (
+          <span key={d.placement.instanceId}>{d.spec.model}</span>
+        ))}
+        {!commit.devices || commit.devices.length === 0 ? (
+          <span className="fg-flag">assumed</span>
+        ) : null}
+      </div>
+    </>
+  );
+}
 
 // --- payload guards ----------------------------------------------------------
 
@@ -82,24 +157,6 @@ function isCommitsPayload(v: unknown): v is { commits: BuildCommit[] } {
   return isRecord(v) && Array.isArray(v.commits) && v.commits.every(isCommit);
 }
 
-function isOp(v: unknown): v is RollbackOp {
-  return (
-    isRecord(v) &&
-    (v.op === "remove" || v.op === "add") &&
-    typeof v.instruction === "string" &&
-    isEdge(v.edge)
-  );
-}
-
-function isPlanPayload(v: unknown): v is { ops: RollbackOp[]; targetFirmwareHash: string } {
-  return (
-    isRecord(v) &&
-    Array.isArray(v.ops) &&
-    v.ops.every(isOp) &&
-    typeof v.targetFirmwareHash === "string"
-  );
-}
-
 function readError(v: unknown): string | null {
   return isRecord(v) && typeof v.error === "string" ? v.error : null;
 }
@@ -114,13 +171,6 @@ function formatWhen(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-}
-
-interface PlanState {
-  ops: RollbackOp[];
-  targetFirmwareHash: string;
-  fromId: string;
-  toId: string;
 }
 
 /** Firmware badge props for a commit's diagram: short-hashable hash + the
@@ -214,8 +264,6 @@ export default function TimelinePage() {
   // null means "compare against my parent", the sensible default for a
   // sequence. Picking an explicit target is the rare secondary action.
   const [compareId, setCompareId] = useState<string | null>(null);
-  const [plan, setPlan] = useState<PlanState | null>(null);
-  const [planLoading, setPlanLoading] = useState(false);
   const [forking, setForking] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -240,6 +288,9 @@ export default function TimelinePage() {
 
   const newestFirst = useMemo(() => [...commits].reverse(), [commits]);
 
+  // The drawable graph: lanes for branches, a bend where they split.
+  const tree = useMemo(() => buildTree(commits), [commits]);
+
   // Land on the newest commit so the page is never an empty right pane.
   useEffect(() => {
     if (!selectedId && newestFirst.length > 0) {
@@ -262,41 +313,45 @@ export default function TimelinePage() {
     return selected.parent ? (byId.get(selected.parent) ?? null) : null;
   }, [selected, compareId, byId]);
 
+  // Naming for every sentence on this page. It follows the selected commit's
+  // devices, so "the ground rail" means the rail on the board that commit was
+  // actually built on.
+  const diffNamer = useMemo(
+    () =>
+      namerFor(
+        layoutProject(
+          selected ? placementsFor(selected) : autoPlace(FALLBACK_SPECS, specById),
+          specById,
+        ),
+      ),
+    [selected],
+  );
+
   const stateDiff = useMemo(
     () => (selected && compareTo ? diff(compareTo.netlist, selected.netlist) : null),
     [selected, compareTo],
   );
 
-  const pick = (id: string) => {
-    setSelectedId(id);
-    setCompareId(null);
-    setPlan(null);
-  };
+  // What it costs to get from the compared commit to the selected one: the net
+  // wiring difference plus whether the code has to be re-sent.
+  const route = useMemo(
+    () =>
+      selected && compareTo ? switchCost(commits, compareTo.id, selected.id) : null,
+    [commits, selected, compareTo],
+  );
 
-  const loadPlan = async () => {
-    if (!selected || !compareTo) return;
-    setPlanLoading(true);
-    try {
-      const res = await fetch(
-        `/api/commits/rollback-plan?from=${encodeURIComponent(selected.id)}&to=${encodeURIComponent(compareTo.id)}`,
-      );
-      const data: unknown = await res.json();
-      if (!res.ok || !isPlanPayload(data)) {
-        throw new Error(readError(data) ?? "rollback plan request failed");
-      }
-      setPlan({
-        ops: data.ops,
-        targetFirmwareHash: data.targetFirmwareHash,
-        fromId: selected.id,
-        toId: compareTo.id,
-      });
-      setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setPlanLoading(false);
-    }
-  };
+  // The commits the route passes through, lit along the tree so the path from
+  // one branch to the other is visible as a path.
+  const routeIds = useMemo(() => {
+    if (!route || !selected || !compareTo) return [];
+    return [
+      compareTo.id,
+      ...route.down.map((c) => c.id),
+      ...(route.base ? [route.base.id] : []),
+      ...route.up.map((c) => c.id),
+      selected.id,
+    ];
+  }, [route, selected, compareTo]);
 
   const fork = async () => {
     if (!selected) return;
@@ -333,91 +388,107 @@ export default function TimelinePage() {
       <div className="timeline-split">
         {/* LEFT: the build progression */}
         <aside className="timeline-rail">
-          <h2 style={{ fontSize: "0.8rem", color: "var(--muted)", marginBottom: "0.5rem" }}>
-            Progress ({commits.length})
+          <h2 style={{ fontSize: "0.9rem", marginTop: 0 }}>
+            History ({commits.length})
           </h2>
           {!loaded ? (
             <p className="muted">Loading…</p>
-          ) : newestFirst.length === 0 ? (
-            <p className="muted">
-              No commits yet. Finish a build on Assemble and commit it.
-            </p>
+          ) : tree.nodes.length === 0 ? (
+            <p className="muted">No commits yet.</p>
           ) : (
-            <ol style={{ listStyle: "none", margin: 0, padding: 0 }}>
-              {newestFirst.map((c, i) => {
-                const isSel = c.id === selectedId;
-                const isCmp = compareTo?.id === c.id && !isSel;
-                return (
-                  <li key={c.id} style={{ position: "relative" }}>
-                    {i < newestFirst.length - 1 ? (
-                      <span
-                        aria-hidden
-                        style={{
-                          position: "absolute",
-                          left: 11,
-                          top: 26,
-                          bottom: -6,
-                          width: 2,
-                          background: "var(--border)",
-                        }}
-                      />
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={() => pick(c.id)}
-                      aria-current={isSel ? "true" : undefined}
-                      className={`timeline-node${isSel ? " is-selected" : ""}`}
-                    >
-                      <span
-                        aria-hidden
-                        className="timeline-dot"
-                        style={{
-                          background: isSel
-                            ? "var(--accent)"
-                            : isCmp
-                              ? "var(--warn)"
-                              : "var(--panel)",
-                          borderColor: isSel
-                            ? "var(--accent)"
-                            : isCmp
-                              ? "var(--warn)"
-                              : "var(--border)",
-                        }}
-                      />
-                      <span style={{ minWidth: 0, flex: 1 }}>
-                        <span style={{ display: "block", fontSize: "0.85rem" }}>
-                          {c.message}
-                        </span>
-                        <span
-                          className="muted mono"
-                          style={{ display: "block", fontSize: "0.68rem" }}
-                        >
-                          {formatWhen(c.createdAt)} · {c.branch} ·{" "}
-                          {shortId(c.id)}
-                          {isCmp ? " · comparing" : ""}
-                        </span>
-                      </span>
-                      {c.photoDataUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={c.photoDataUrl}
-                          alt=""
-                          width={38}
-                          height={28}
-                          style={{
-                            objectFit: "cover",
-                            borderRadius: 4,
-                            border: "1px solid var(--border)",
-                            flexShrink: 0,
-                          }}
-                        />
-                      ) : null}
-                    </button>
-                  </li>
-                );
-              })}
-            </ol>
+            <>
+              {/* Each lane is a branch and each bend is a fork, so where two
+                  versions of the board diverged is visible rather than
+                  something you infer from branch labels down a flat list. */}
+              <CommitTreeView
+                tree={tree}
+                selectedId={selectedId}
+                compareId={compareTo?.id ?? null}
+                onSelect={(id) => {
+                  setSelectedId(id);
+                }}
+                onCompare={(id) => {
+                  setCompareId(id);
+                }}
+                routeIds={routeIds}
+              />
+              <p className="muted fg-tree-hint">
+                Pick a commit to view it. Press &ldquo;from here&rdquo; on
+                another to see what it takes to get between them.
+              </p>
+            </>
           )}
+
+          {/* The route: what changes on the desk to move between two points on
+              the tree. Not a teardown back to the fork and a rebuild — the net
+              difference, because most wiring is identical on both sides. */}
+          {route && compareTo && selected ? (
+            <div className="card">
+              <h3 style={{ fontSize: "0.9rem", marginTop: 0 }}>
+                {shortId(compareTo.id)} → {shortId(selected.id)}
+              </h3>
+              {route.base && route.base.id !== compareTo.id && route.base.id !== selected.id ? (
+                <p className="muted fg-route-base">
+                  These split at <code>{shortId(route.base.id)}</code> (
+                  {route.base.message}). Everything above that point is shared,
+                  so none of it is touched.
+                </p>
+              ) : null}
+              <p style={{ fontSize: "0.8rem", marginTop: 0 }}>
+                {routeSummary(route)}
+              </p>
+
+              {route.ops.length > 0 ? (
+                <ol className="fg-plan">
+                  {plainPlan(route.ops, diffNamer, compareTo.netlist.edges.length).map(
+                    (step, i) => (
+                      <li key={`${compareTo.id}-${selected.id}-${i}`}>
+                        <strong>{step.title}</strong>
+                        <p>{step.body}</p>
+                        <p className="muted fg-plan-delta">{step.delta}</p>
+                        <code>{step.refs}</code>
+                      </li>
+                    ),
+                  )}
+                </ol>
+              ) : null}
+
+              {route.firmwareChanges ? (
+                <p className="fg-route-code">
+                  <strong>Then the code.</strong> This branch runs a different
+                  sketch ({shortId(route.targetFirmwareHash)}). Wiring alone will
+                  not change the behaviour — send the code as the last step.
+                </p>
+              ) : null}
+
+              {stateDiff ? (
+                <details className="fg-route-detail">
+                  <summary>What changed, commit by commit</summary>
+                  <ul className="fg-change-list">
+                    {stateDiff.added.map((e) => (
+                      <li key={`a-${e.id}`} style={{ borderColor: "var(--accent)" }}>
+                        {changeSentence(e, diffNamer, "added")}
+                        <code>{e.from} · {e.to}</code>
+                      </li>
+                    ))}
+                    {stateDiff.removed.map((e) => (
+                      <li key={`r-${e.id}`} style={{ borderColor: "var(--error)" }}>
+                        {changeSentence(e, diffNamer, "removed")}
+                        <code>{e.from} · {e.to}</code>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="muted" style={{ fontSize: "0.72rem", marginBottom: 0 }}>
+                    {diffHeadline(
+                      stateDiff.added.length,
+                      stateDiff.removed.length,
+                      selected.firmware.hash !== compareTo.firmware.hash,
+                    )}
+                  </p>
+                </details>
+              ) : null}
+            </div>
+          ) : null}
         </aside>
 
         {/* RIGHT: the state at that point */}
@@ -454,7 +525,6 @@ export default function TimelinePage() {
                     value={compareId ?? ""}
                     onChange={(e) => {
                       setCompareId(e.target.value || null);
-                      setPlan(null);
                     }}
                     aria-label="Comparison target"
                     style={{
@@ -482,18 +552,35 @@ export default function TimelinePage() {
                   </select>
                 </div>
 
-                <div style={{ margin: "0.5rem 0" }}>
-                  <BoardView
-                    netlist={selected.netlist}
-                    {...(compareTo ? { diffAgainst: compareTo.netlist } : {})}
-                    firmware={firmwareBadgeFor(selected)}
-                  />
+                {/* The same wireframe the guidance page draws, on the same
+                    devices, in read-only mode. History and instruction differ
+                    in what they say about the wiring, never in how the wiring
+                    is drawn — if a commit looked like a different kind of
+                    picture, comparing it to the build in front of you would
+                    be work. */}
+                <div className="fg-wire-stage" style={{ margin: "0.5rem 0" }}>
+                  <CommitBench commit={selected} compareTo={compareTo} />
+                  <div className="fg-fw-badge">
+                    <code>fw {firmwareBadgeFor(selected).hash.slice(0, 8)}</code>
+                    <span className="muted">
+                      {firmwareBadgeFor(selected).pinsUsed.length > 0
+                        ? firmwareBadgeFor(selected)
+                            .pinsUsed.map((p) => p.replace(/^UNO:/, ""))
+                            .join(" · ")
+                        : "no pins driven"}
+                    </span>
+                    {compareTo && selected.firmware.hash !== compareTo.firmware.hash ? (
+                      <span style={{ color: "var(--warn)" }}>
+                        the code on the board changed too
+                      </span>
+                    ) : null}
+                  </div>
                   <p
                     className="muted"
                     style={{ fontSize: "0.72rem", textAlign: "center", marginTop: "0.25rem" }}
                   >
                     {compareTo
-                      ? "green = added since the comparison · red dashed = removed · gray = unchanged"
+                      ? "green = added since the comparison · red dashed = taken out · dimmed = unchanged"
                       : "the board as this commit left it"}
                   </p>
                 </div>
@@ -521,72 +608,9 @@ export default function TimelinePage() {
                   >
                     {forking ? "Forking…" : "Fork from here"}
                   </button>
-                  <button
-                    className="btn"
-                    disabled={!compareTo || planLoading}
-                    style={{ opacity: !compareTo ? 0.5 : 1 }}
-                    onClick={() => void loadPlan()}
-                  >
-                    {planLoading ? "Planning…" : "Plan rollback to comparison"}
-                  </button>
                 </div>
               </div>
 
-              {stateDiff && compareTo ? (
-                <div className="card">
-                  <h3 style={{ fontSize: "0.9rem" }}>
-                    What changed since {shortId(compareTo.id)}
-                  </h3>
-                  {stateDiff.added.length === 0 && stateDiff.removed.length === 0 ? (
-                    <p className="muted">
-                      Same wiring. Only the firmware differs
-                      {selected.firmware.hash === compareTo.firmware.hash
-                        ? " (and not even that)"
-                        : ""}
-                      .
-                    </p>
-                  ) : (
-                    <>
-                      {stateDiff.added.length > 0 ? (
-                        <ul style={{ paddingLeft: "1.1rem", color: "var(--accent)" }}>
-                          {stateDiff.added.map((e) => (
-                            <li key={`a-${e.id}`}>added {describeEdge(e)}</li>
-                          ))}
-                        </ul>
-                      ) : null}
-                      {stateDiff.removed.length > 0 ? (
-                        <ul style={{ paddingLeft: "1.1rem", color: "var(--error)" }}>
-                          {stateDiff.removed.map((e) => (
-                            <li key={`r-${e.id}`}>removed {describeEdge(e)}</li>
-                          ))}
-                        </ul>
-                      ) : null}
-                    </>
-                  )}
-                </div>
-              ) : null}
-
-              {plan ? (
-                <div className="card">
-                  <h3 style={{ fontSize: "0.9rem" }}>
-                    Rollback: {shortId(plan.fromId)} → {shortId(plan.toId)}
-                  </h3>
-                  {plan.ops.length === 0 ? (
-                    <p className="muted">Nothing to undo physically.</p>
-                  ) : (
-                    <ol style={{ paddingLeft: "1.2rem" }}>
-                      {plan.ops.map((op, i) => (
-                        <li key={`${op.op}-${i}`} style={{ marginBottom: "0.25rem" }}>
-                          {op.instruction}
-                        </li>
-                      ))}
-                    </ol>
-                  )}
-                  <p className="badge mono">
-                    then re-flash firmware {plan.targetFirmwareHash.slice(0, 8)}
-                  </p>
-                </div>
-              ) : null}
             </>
           )}
         </section>

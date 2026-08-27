@@ -11,8 +11,14 @@
 // what they are waiting for.
 
 import { useCallback, useMemo, useState } from "react";
-import BoardView from "@/components/BoardView";
+import CircuitEditor from "@/components/CircuitEditor";
+import PartChip from "@/components/PartChip";
+import { CATALOG, specById } from "@/lib/devices/catalog";
+import { detectDevicesOrDefault } from "@/lib/devices/detect";
+import { autoPlace, connectionEnds, layoutProject } from "@/lib/devices/layout";
+import { linkifyParts } from "@/lib/parts/gallery";
 import {
+  CIRCUIT_STORY,
   GUIDED_STEPS,
   LEGEND,
   computeWaves,
@@ -40,6 +46,7 @@ export default function AssemblePage() {
   const waves = useMemo(() => computeWaves(steps), [steps]);
 
   const [selectedId, setSelectedId] = useState<string>(steps[0]?.id ?? "");
+  const [view, setView] = useState<"before" | "after">("after");
   const [doneIds, setDoneIds] = useState<string[]>([]);
   const [flashState, setFlashState] = useState<FlashState>("idle");
   const [flashOutput, setFlashOutput] = useState<string | null>(null);
@@ -57,18 +64,36 @@ export default function AssemblePage() {
   );
   const changesCircuit = after.edges.length !== before.edges.length;
 
+  // Which physical devices this build runs on. The legend names the parts in
+  // words ("Half-size breadboard"), the detector turns those words into
+  // catalog models, and the wireframe draws whatever the models say. Change
+  // the legend to a 170-point board and the drawing loses its rails.
+  const { matches } = useMemo(
+    () =>
+      detectDevicesOrDefault(
+        LEGEND.map((p) => p.name),
+        CATALOG,
+        { breadboardId: "bb-400", boardId: "uno-r3" },
+      ),
+    [],
+  );
+  const specIds = useMemo(() => matches.map((m) => m.specId), [matches]);
+
+  // The same devices the wireframe draws on, so the written instruction and
+  // the picture name the same holes on the same models.
+  const layout = useMemo(
+    () => layoutProject(autoPlace(specIds, specById), specById),
+    [specIds],
+  );
+
+  // The holes this step aims at, so the wireframe can ring them.
+  const stepRefs = useMemo(
+    () => (selected?.edge ? [selected.edge.from, selected.edge.to] : []),
+    [selected],
+  );
+
   const usedParts = selected ? legendFor(selected) : [];
   const usedPartIds = new Set(usedParts.map((p) => p.id));
-
-  const blockedBy = selected
-    ? selected.dependsOn.filter((d) => !doneIds.includes(d))
-    : [];
-
-  const toggleDone = useCallback((id: string) => {
-    setDoneIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-    );
-  }, []);
 
   const injectCode = useCallback(async () => {
     if (!selected?.code) return;
@@ -107,204 +132,91 @@ export default function AssemblePage() {
     }
   }, [selected]);
 
+  // Both ends of this step's connection, named down to the device and hole.
+  const ends = useMemo(
+    () =>
+      selected?.edge
+        ? connectionEnds(layout, selected.edge.from, selected.edge.to)
+        : null,
+    [selected, layout],
+  );
+
   return (
     <>
       <h1 style={{ marginBottom: "0.2rem" }}>Guided assembly</h1>
       <p className="muted" style={{ marginTop: 0, fontSize: "0.85rem" }}>
-        Pick a step on the right. The board shows what changes when you do it.
+        {CIRCUIT_STORY}
       </p>
 
       <div className="assemble-split">
-        {/* LEFT: before and after */}
+        {/* LEFT: the bench, given the width. */}
         <section className="assemble-stage">
           {selected ? (
-            <>
-              <div className="card" style={{ marginBottom: "0.6rem" }}>
-                <div
+            <div className="card">
+              <div className="fg-ba-switch">
+                <span
+                  className="badge"
                   style={{
-                    display: "flex",
-                    alignItems: "baseline",
-                    gap: "0.5rem",
-                    flexWrap: "wrap",
-                    marginBottom: "0.4rem",
+                    borderColor: KIND_STYLE[selected.kind].colour,
+                    color: KIND_STYLE[selected.kind].colour,
                   }}
                 >
-                  <span
-                    className="badge"
-                    style={{
-                      borderColor: KIND_STYLE[selected.kind].colour,
-                      color: KIND_STYLE[selected.kind].colour,
-                    }}
-                  >
-                    {KIND_STYLE[selected.kind].label}
-                  </span>
-                  <strong style={{ fontSize: "0.95rem" }}>{selected.title}</strong>
-                </div>
-
-                {changesCircuit ? (
-                  <div className="assemble-ba">
-                    <figure style={{ margin: 0 }}>
-                      <figcaption
-                        className="muted"
-                        style={{ fontSize: "0.72rem", marginBottom: 2 }}
-                      >
-                        before
-                      </figcaption>
-                      <BoardView netlist={before} />
-                    </figure>
-                    <figure style={{ margin: 0 }}>
-                      <figcaption
-                        style={{
-                          fontSize: "0.72rem",
-                          marginBottom: 2,
-                          color: "var(--accent)",
-                        }}
-                      >
-                        after — new connection in green
-                      </figcaption>
-                      <BoardView netlist={after} diffAgainst={before} />
-                    </figure>
-                  </div>
-                ) : (
-                  <figure style={{ margin: 0 }}>
-                    <figcaption
-                      className="muted"
-                      style={{ fontSize: "0.72rem", marginBottom: 2 }}
-                    >
-                      the wiring does not change in this step
-                    </figcaption>
-                    <BoardView
-                      netlist={after}
-                      {...(selected.kind === "flash" && selected.pins
-                        ? { firmware: { hash: "pending", pinsUsed: selected.pins } }
-                        : {})}
-                    />
-                  </figure>
-                )}
-              </div>
-
-              <div className="card">
-                <p style={{ marginTop: 0 }}>{selected.instruction}</p>
-                <p className="muted" style={{ fontSize: "0.82rem" }}>
-                  Check: {selected.checkDetail}
-                </p>
-
-                <p
-                  style={{
-                    fontSize: "0.8rem",
-                    color:
-                      selected.dependsOn.length === 0
-                        ? "var(--accent)"
-                        : "var(--warn)",
-                  }}
+                  {KIND_STYLE[selected.kind].label}
+                </span>
+                <strong style={{ fontSize: "0.95rem", flex: 1 }}>
+                  {selected.title}
+                </strong>
+                {ends?.from && ends.to ? (
+                  <code className="fg-end-ref">
+                    {ends.from.ref} → {ends.to.ref}
+                  </code>
+                ) : null}
+                <button
+                  type="button"
+                  className={view === "before" ? "primary" : ""}
+                  onClick={() => setView("before")}
+                  disabled={!changesCircuit}
                 >
-                  {orderingNote(selected, steps)}
-                </p>
-
-                {blockedBy.length > 0 ? (
-                  <div className="banner warn" style={{ marginTop: "0.4rem" }}>
-                    Not ready yet: finish{" "}
-                    {blockedBy
-                      .map((id) => steps.find((s) => s.id === id)?.title ?? id)
-                      .join(", ")}{" "}
-                    first.
-                  </div>
-                ) : null}
-
-                {selected.kind === "flash" && selected.code ? (
-                  <>
-                    <pre
-                      className="mono"
-                      style={{
-                        background: "var(--bg)",
-                        border: "1px solid var(--border)",
-                        borderRadius: 8,
-                        padding: "0.6rem",
-                        overflowX: "auto",
-                        fontSize: "0.74rem",
-                        lineHeight: 1.45,
-                      }}
-                    >
-                      {selected.code}
-                    </pre>
-                    <button
-                      type="button"
-                      className="btn btn-primary"
-                      disabled={flashState === "running" || blockedBy.length > 0}
-                      onClick={() => void injectCode()}
-                    >
-                      {flashState === "running" ? "Sending…" : "Inject code"}
-                    </button>
-                    {flashOutput ? (
-                      <pre
-                        className="mono"
-                        style={{
-                          marginTop: "0.5rem",
-                          fontSize: "0.72rem",
-                          whiteSpace: "pre-wrap",
-                          color:
-                            flashState === "ok" ? "var(--accent)" : "var(--warn)",
-                        }}
-                      >
-                        {flashOutput}
-                      </pre>
-                    ) : null}
-                  </>
-                ) : null}
-
-                {selected.kind === "verify" ? (
-                  <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-                    <button
-                      type="button"
-                      className={
-                        verifyOutcome === "worked" ? "btn btn-primary" : "btn"
-                      }
-                      onClick={() => {
-                        setVerifyOutcome("worked");
-                        toggleDone(selected.id);
-                      }}
-                    >
-                      It worked
-                    </button>
-                    <button
-                      type="button"
-                      className="btn"
-                      onClick={() => setVerifyOutcome("did-not")}
-                    >
-                      It did not
-                    </button>
-                    {verifyOutcome === "did-not" ? (
-                      <div
-                        className="banner warn"
-                        style={{ width: "100%", marginTop: "0.4rem" }}
-                      >
-                        Check the LED&apos;s long leg goes to the pin-13 row and its
-                        short leg reaches ground through the resistor.
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                {selected.kind !== "flash" && selected.kind !== "verify" ? (
-                  <button
-                    type="button"
-                    className={
-                      doneIds.includes(selected.id) ? "btn btn-primary" : "btn"
-                    }
-                    onClick={() => toggleDone(selected.id)}
-                  >
-                    {doneIds.includes(selected.id) ? "✓ Done" : "Mark done"}
-                  </button>
-                ) : null}
+                  Before
+                </button>
+                <button
+                  type="button"
+                  className={view === "after" ? "primary" : ""}
+                  onClick={() => setView("after")}
+                >
+                  After
+                </button>
               </div>
-            </>
+
+              <CircuitEditor
+                initialSpecIds={specIds}
+                matches={matches}
+                netlist={view === "before" ? before : after}
+                {...(changesCircuit && view === "after"
+                  ? { diffAgainst: before }
+                  : {})}
+                highlightRefs={stepRefs}
+                ghostEdge={view === "before" ? (selected.edge ?? null) : null}
+                railPosition="below"
+                allowFreeEdit={false}
+              />
+              <p className="muted" style={{ fontSize: "0.72rem", marginBottom: 0 }}>
+                {changesCircuit
+                  ? "The pulsing rings are the two holes this step joins. Green is the connection it adds."
+                  : "This step changes the software, not the wiring."}
+              </p>
+            </div>
           ) : null}
         </section>
 
-        {/* RIGHT: legend + steps, scrolling on its own */}
+        {/* RIGHT: the steps. Each row carries its shorthand; the detail opens
+            in place, so the list stays a wiring table you can read straight
+            down and the long version is one click away where you need it. */}
         <aside className="assemble-steps">
           <div className="card" style={{ marginBottom: "0.6rem" }}>
-            <h2 style={{ fontSize: "0.85rem", marginTop: 0 }}>Parts</h2>
+            <h2 className="fg-h3" style={{ marginTop: 0 }}>
+              Parts
+            </h2>
             <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
               {LEGEND.map((p) => {
                 const used = usedPartIds.has(p.id);
@@ -315,26 +227,16 @@ export default function AssemblePage() {
                       display: "flex",
                       alignItems: "center",
                       gap: "0.45rem",
-                      padding: "0.2rem 0.3rem",
+                      padding: "0.15rem 0.2rem",
                       borderRadius: 6,
                       background: used ? "rgba(34,197,94,0.12)" : "transparent",
-                      opacity: used ? 1 : 0.55,
+                      opacity: used ? 1 : 0.6,
                     }}
                   >
-                    <span
-                      aria-hidden
-                      style={{
-                        width: 12,
-                        height: 12,
-                        borderRadius: 3,
-                        background: p.colour,
-                        flexShrink: 0,
-                      }}
-                    />
-                    <span style={{ fontSize: "0.78rem", flex: 1 }}>
+                    <PartChip partId={p.id}>
                       {p.name}
                       {p.qty > 1 ? ` ×${p.qty}` : ""}
-                    </span>
+                    </PartChip>
                     {used ? (
                       <span className="badge" style={{ fontSize: "0.62rem" }}>
                         this step
@@ -359,47 +261,148 @@ export default function AssemblePage() {
                   ? "Any order within this group."
                   : "One step, after the group above."}
               </p>
-              <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+
+              <ol className="fg-steps">
                 {wave.map((s: GuidedStep) => {
                   const active = s.id === selectedId;
-                  const done = doneIds.includes(s.id);
+                  const se = s.edge
+                    ? connectionEnds(layout, s.edge.from, s.edge.to)
+                    : null;
+                  const blocked = s.dependsOn.filter((d) => !doneIds.includes(d));
                   return (
-                    <li key={s.id}>
+                    <li key={s.id} className={active ? "is-active" : ""}>
                       <button
                         type="button"
+                        className="fg-step-head"
                         onClick={() => setSelectedId(s.id)}
-                        className={`assemble-step${active ? " is-active" : ""}`}
                       >
                         <span
                           aria-hidden
-                          style={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: "50%",
-                            background: done
-                              ? "var(--accent)"
-                              : KIND_STYLE[s.kind].colour,
-                            flexShrink: 0,
-                          }}
+                          className={`fg-step-dot${active ? " fg-dot-pulse" : ""}`}
+                          style={{ background: KIND_STYLE[s.kind].colour }}
                         />
-                        <span style={{ flex: 1, minWidth: 0 }}>
-                          <span style={{ display: "block", fontSize: "0.8rem" }}>
-                            {done ? "✓ " : ""}
-                            {s.title}
-                          </span>
-                          <span
-                            className="muted"
-                            style={{ display: "block", fontSize: "0.68rem" }}
-                          >
+                        <span className="fg-step-title">{s.title}</span>
+                        {/* The shorthand IS the instruction for anyone who can
+                            read it; the prose below is for anyone who cannot. */}
+                        {se?.from && se.to ? (
+                          <code className="fg-step-code">
+                            {se.from.ref} → {se.to.ref}
+                          </code>
+                        ) : (
+                          <span className="fg-step-kind">
                             {KIND_STYLE[s.kind].label}
-                            {s.dependsOn.length > 0 ? " · waits on earlier work" : ""}
                           </span>
-                        </span>
+                        )}
                       </button>
+
+                      <details
+                        open={active}
+                        onToggle={(e) => {
+                          if ((e.target as HTMLDetailsElement).open) setSelectedId(s.id);
+                        }}
+                      >
+                        <summary>In full</summary>
+                        <div className="fg-step-body">
+                          <p>
+                            {linkifyParts(s.instruction).map((seg, i) =>
+                              seg.partId ? (
+                                <PartChip key={i} partId={seg.partId}>
+                                  {seg.text}
+                                </PartChip>
+                              ) : (
+                                <span key={i}>{seg.text}</span>
+                              ),
+                            )}
+                          </p>
+                          <p className="fg-why">
+                            <span className="muted">Why: </span>
+                            {s.why}
+                          </p>
+                          <p className="muted" style={{ fontSize: "0.74rem" }}>
+                            Right when: {s.checkDetail}
+                          </p>
+                          {s.dependsOn.length > 0 ? (
+                            <p style={{ fontSize: "0.74rem", color: "var(--warn)" }}>
+                              {orderingNote(s, steps)}
+                            </p>
+                          ) : null}
+
+                          {s.kind === "flash" && s.code ? (
+                            <>
+                              <pre className="mono fg-sketch">{s.code}</pre>
+                              <button
+                                type="button"
+                                className="btn btn-primary"
+                                disabled={flashState === "running"}
+                                onClick={() => void injectCode()}
+                              >
+                                {flashState === "running" ? "Writing…" : "Write code"}
+                              </button>
+                              {flashOutput ? (
+                                <pre
+                                  className="mono fg-sketch"
+                                  style={{
+                                    whiteSpace: "pre-wrap",
+                                    color:
+                                      flashState === "ok"
+                                        ? "var(--accent)"
+                                        : "var(--warn)",
+                                  }}
+                                >
+                                  {flashOutput}
+                                </pre>
+                              ) : null}
+                            </>
+                          ) : null}
+
+                          {s.kind === "verify" ? (
+                            <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+                              <button
+                                type="button"
+                                className={
+                                  verifyOutcome === "worked" ? "btn btn-primary" : "btn"
+                                }
+                                onClick={() => setVerifyOutcome("worked")}
+                              >
+                                It lit up
+                              </button>
+                              <button
+                                type="button"
+                                className="btn"
+                                onClick={() => setVerifyOutcome("did-not")}
+                              >
+                                It did not
+                              </button>
+                              {verifyOutcome === "did-not" ? (
+                                <div
+                                  className="banner warn"
+                                  style={{ width: "100%", marginTop: "0.4rem" }}
+                                >
+                                  Two things cause this. Check the LED&apos;s long
+                                  leg is in the row the red wire reaches, and check
+                                  the yellow and black wires sit on OPPOSITE sides
+                                  of the groove — same side means the pin is
+                                  grounded permanently.
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : null}
+
+                          {blocked.length > 0 && s.agentCheckable ? (
+                            <p className="muted" style={{ fontSize: "0.72rem" }}>
+                              Waiting on:{" "}
+                              {blocked
+                                .map((id) => steps.find((x) => x.id === id)?.title ?? id)
+                                .join(", ")}
+                              .
+                            </p>
+                          ) : null}
+                        </div>
+                      </details>
                     </li>
                   );
                 })}
-              </ul>
+              </ol>
             </div>
           ))}
         </aside>

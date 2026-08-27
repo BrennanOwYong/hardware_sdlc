@@ -7,8 +7,8 @@
 // Coordinate system: one SVG canvas of BOARD_W x BOARD_H units holding a
 // half-size breadboard (rows 1..30, columns a..j, PWR + GND rails) stacked
 // above an Arduino Uno silhouette. refToXY() returns coordinates normalized
-// to 0..1 so the same numbers drive BoardView (SVG) and Overlay (canvas
-// over live video).
+// to 0..1 so the same numbers drive the coach Overlay (canvas over live
+// video). The bench wireframe uses lib/devices/layout.ts instead.
 
 import type {
   AssemblyStep,

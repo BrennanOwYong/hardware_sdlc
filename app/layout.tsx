@@ -23,12 +23,15 @@ export default function RootLayout({
         <nav className="nav">
           <span className="brand">Forge</span>
           {/* Four features, named for what a person does rather than how the
-              system is built. /assemble, /builder and /bench stay reachable by
-              URL as prototypes but are deliberately not promoted here. */}
+              system is built. Guidance has two halves and both are reachable:
+              "Guide" is the bench (the wireframe you build against) and
+              "Coach" is the camera (photo of your real desk, annotated).
+              /builder and /bench stay reachable by URL as prototypes. */}
           <Link href="/">Home</Link>
           <Link href="/inventory">Find</Link>
           <Link href="/check">Build</Link>
-          <Link href="/coach">Guide</Link>
+          <Link href="/assemble">Guide</Link>
+          <Link href="/coach">Coach</Link>
           <Link href="/timeline">History</Link>
         </nav>
         <main>{children}</main>

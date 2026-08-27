@@ -9,6 +9,7 @@ import {
   legendFor,
   netlistAfter,
   netlistBefore,
+  presentationOrder,
   orderingNote,
   siblingsInWave,
   waveIndexById,
@@ -47,8 +48,8 @@ test("the build includes a code-injection step and a verification step", () => {
 test("independent wiring shares a wave: order genuinely does not matter", () => {
   const waves = computeWaves(GUIDED_STEPS);
   const first = waves[0].map((s) => s.id);
-  // Grounding, the LED, pin 13, the button and its wires are all independent.
-  for (const id of ["w1", "c1", "w2", "c2", "w3", "w4"]) {
+  // Grounding, the LED and the whole button branch are independent of each other.
+  for (const id of ["w1", "c1", "c2", "w3", "w4"]) {
     assert.ok(first.includes(id), `${id} should be free to do first`);
   }
   assert.equal(
@@ -56,6 +57,66 @@ test("independent wiring shares a wave: order genuinely does not matter", () => 
     false,
     "the resistor bridges the LED's row, so it waits",
   );
+  assert.equal(
+    first.includes("w2"),
+    false,
+    "the pin-13 wire is a 5V source: it waits for the resistor that limits it",
+  );
+});
+
+test("the LED's current limit exists before its power source does", () => {
+  const waveOf = waveIndexById(GUIDED_STEPS);
+  // Wiring a driven pin to an unprotected LED can destroy it the moment the
+  // board powers up, so this ordering is a safety fact, not a preference.
+  assert.ok(
+    waveOf.get("w2") > waveOf.get("r1"),
+    "pin 13 must not reach the LED before the 220Ω resistor is in place",
+  );
+  assert.ok(waveOf.get("r1") > waveOf.get("c1"), "the resistor needs the LED seated");
+});
+
+test("the button's two wires land on opposite sides of the centre groove", () => {
+  const byId = new Map(GUIDED_STEPS.map((s) => [s.id, s]));
+  const signal = byId.get("w3").edge;
+  const ground = byId.get("w4").edge;
+  const side = (ref) => (/^BB:\d+:([a-e])$/.test(ref) ? "left" : "right");
+  const signalHole = [signal.from, signal.to].find((r) => r.startsWith("BB:"));
+  const groundHole = [ground.from, ground.to].find((r) => r.startsWith("BB:") && !r.includes("RAIL"));
+  // Same side means D2 is permanently grounded and the button does nothing:
+  // the circuit behaves as though it were held down forever.
+  assert.notEqual(
+    side(signalHole),
+    side(groundHole),
+    "signal and ground on one side would short the pin to ground",
+  );
+});
+
+test("the button edge is the connection it CLOSES, across the groove", () => {
+  const button = GUIDED_STEPS.find((s) => s.id === "c2").edge;
+  const [, , fromCol] = button.from.split(":");
+  const [, , toCol] = button.to.split(":");
+  const leftHalf = (c) => "abcde".includes(c);
+  assert.notEqual(
+    leftHalf(fromCol),
+    leftHalf(toCol),
+    "a pushbutton bridges the groove; an edge within one half is a leg pair, not the switch",
+  );
+});
+
+test("every step says why it exists, not only what to do", () => {
+  for (const s of GUIDED_STEPS) {
+    assert.ok(s.why && s.why.length > 40, `${s.id} needs a real explanation`);
+    assert.doesNotMatch(s.why, /BB:|UNO:/, `${s.id} explains in words, not refs`);
+  }
+});
+
+test("only steps the app can confirm are marked agent-checkable", () => {
+  const checkable = GUIDED_STEPS.filter((s) => s.agentCheckable).map((s) => s.id);
+  assert.deepEqual(checkable.sort(), ["flash", "power"]);
+  // Everything else is a human observation; a tickbox for it would record a
+  // claim nobody verified.
+  const verify = GUIDED_STEPS.find((s) => s.id === "verify");
+  assert.notEqual(verify.agentCheckable, true);
 });
 
 test("software injection waits for the wiring it drives", () => {
@@ -117,4 +178,33 @@ test("every step lands in exactly one wave", () => {
   const flat = waves.flat().map((s) => s.id);
   assert.equal(flat.length, GUIDED_STEPS.length);
   assert.equal(new Set(flat).size, GUIDED_STEPS.length, "no step appears twice");
+});
+
+test("the before-state never shows a step that has not come up yet", () => {
+  // The authoring order in GUIDED_STEPS is not the order the UI presents, so
+  // walking the array put the resistor on the board during "Seat the button".
+  const before = netlistBefore(GUIDED_STEPS, "c2");
+  const ids = before.edges.map((e) => e.id);
+  assert.ok(!ids.includes("r1"), "the resistor belongs to a later group");
+  assert.ok(!ids.includes("w2"), "the pin-13 wire belongs to a later group");
+  assert.deepEqual(ids, ["w1", "c1"], "only what the list showed above it");
+});
+
+test("every step's before-state is a subset of the steps shown above it", () => {
+  const order = presentationOrder(GUIDED_STEPS);
+  order.forEach((step, i) => {
+    const allowed = new Set(
+      order.slice(0, i).map((s) => s.edge?.id).filter(Boolean),
+    );
+    for (const e of netlistBefore(GUIDED_STEPS, step.id).edges) {
+      assert.ok(allowed.has(e.id), `${step.id} shows ${e.id} too early`);
+    }
+  });
+});
+
+test("presentation order groups by wave, not by how the file was written", () => {
+  const order = presentationOrder(GUIDED_STEPS).map((s) => s.id);
+  assert.ok(order.indexOf("c2") < order.indexOf("r1"), "button before resistor");
+  assert.ok(order.indexOf("r1") < order.indexOf("w2"), "resistor before pin 13");
+  assert.equal(order.length, GUIDED_STEPS.length, "no step lost or duplicated");
 });
