@@ -1,6 +1,27 @@
 # Forge
 
-Forge is a phone-friendly web app for "vibe coding" hardware: photograph your workspace to get a searchable part inventory (Ctrl-F for real life), follow guided assembly where live video confirms each wire placement before you push it in, and version every working build as a commit with photo, netlist, and firmware hash (git for hardware).
+> Build hardware like software.
+
+Forge is a phone-friendly hardware workspace. It uses a camera to recognize parts, guides assembly, checks wiring, generates firmware, and saves each working build as a versioned commit.
+
+[Open the project showcase](https://brennanowyong.github.io/hardware_sdlc/) · [View the source](https://github.com/BrennanOwYong/hardware_sdlc) · [View the presentation](https://docs.google.com/presentation/d/1R5HwB8NtaesOuuuVrFCjG-rc99vFS3a6Pyrj0Bo_yPw/edit?usp=sharing)
+
+## What Forge demonstrates
+
+Forge closes the loop from an idea to a working circuit:
+
+| Capability | What it does |
+| --- | --- |
+| Recognize | Photograph a workbench and turn its parts into a searchable inventory. |
+| Connect | Follow guided, pin-aware assembly with live placement confirmation. |
+| Test | Generate firmware and compile or flash it through `arduino-cli`. |
+| Remember | Commit the wiring, firmware, photo, and build journal so the result can be reviewed or diffed. |
+
+The app includes a deterministic demo mode. It runs without API keys, a camera, or physical electronics. Open `/assemble?demo=auto` to see the complete assembly flow, including a deliberate wrong-placement correction.
+
+## Project status
+
+This is an open prototype and demonstration build. It is scoped to breadboard circuits on an Arduino Uno. Live vision and hardware flashing are available when the required credentials and hardware are connected. The keyless paths make the main product story reproducible for reviewers.
 
 ## Quickstart
 

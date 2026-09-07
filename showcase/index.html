@@ -3,100 +3,22 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="Forge turns a phone camera into a patient pair of hands for building hardware." />
-    <title>Forge — hardware, in the loop</title>
+    <meta name="description" content="Forge is a camera-native workspace for building hardware like software." />
+    <title>Forge — build hardware like software</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <nav class="site-nav">
-      <a class="wordmark" href="#top"><span class="mark">✦</span> forge</a>
-      <div class="nav-links"><a href="#how">How it works</a><a href="#proof">The proof</a><a href="#surfaces">Surfaces</a></div>
-      <a class="nav-cta" href="https://github.com/BrennanOwYong/hardware_sdlc">View on GitHub <span>↗</span></a>
-    </nav>
-
+    <header class="topbar"><a class="brand" href="#top" aria-label="Forge home"><span class="brand-mark">✦</span><span>forge</span></a><nav aria-label="Primary navigation"><a href="#system">The system</a><a href="#surfaces">Capabilities</a><a href="#proof">Proof</a></nav><a class="outline-button" href="https://github.com/BrennanOwYong/hardware_sdlc">View source <span>↗</span></a></header>
     <main id="top">
-      <section class="hero section-shell snap-section" data-stage="recognize">
-        <div class="hero-copy">
-          <p class="eyebrow"><span class="live-dot"></span> A camera-native hardware workspace</p>
-          <h1>Build HARDWARE<br /><em>like software.</em></h1>
-          <p class="lede">Forge watches the bench, understands the parts, and stays with you until the circuit works. It is the missing loop between a good idea and a working board.</p>
-          <div class="hero-actions"><a class="button button-dark" href="https://github.com/BrennanOwYong/hardware_sdlc">Explore the build <span>↗</span></a><a class="text-link" href="#how">See the loop <span>↓</span></a></div>
-          <div class="hero-note"><span class="note-icon">⌁</span><span>Built for the messy middle: the last wire, the wrong hole, the “why is this not working?”</span></div>
-        </div>
-        <div class="hero-media">
-          <div class="app-carousel" aria-label="Forge running in the browser">
-            <article class="carousel-slide is-active"><div class="image-frame"><img src="media/app-inventory.png" alt="Forge inventory page running in the browser" /><span class="corner corner-tl"></span><span class="corner corner-br"></span><span class="float-label label-top">RUNNING NOW <b>●</b></span><span class="float-label label-bottom">Find every part</span></div><div class="slide-copy"><span class="slide-index">01 / 03</span><strong>Recognize the bench</strong><span>Photo → searchable inventory</span></div></article>
-            <article class="carousel-slide"><div class="image-frame"><img src="media/app-assemble.png" alt="Forge assembly guide running in the browser" /><span class="corner corner-tl"></span><span class="corner corner-br"></span><span class="float-label label-top">RUNNING NOW <b>●</b></span><span class="float-label label-bottom">Place with confidence</span></div><div class="slide-copy"><span class="slide-index">02 / 03</span><strong>Connect the right holes</strong><span>Guide → confirm → seat</span></div></article>
-            <article class="carousel-slide"><div class="image-frame"><img src="media/app-timeline.png" alt="Forge timeline page running in the browser" /><span class="corner corner-tl"></span><span class="corner corner-br"></span><span class="float-label label-top">RUNNING NOW <b>●</b></span><span class="float-label label-bottom">Keep the working state</span></div><div class="slide-copy"><span class="slide-index">03 / 03</span><strong>Commit what worked</strong><span>Wiring + firmware + journal</span></div></article>
-            <button class="carousel-button previous" type="button" aria-label="Previous screenshot">←</button><button class="carousel-button next" type="button" aria-label="Next screenshot">→</button>
-          </div>
-        </div>
-      </section>
-
-      <div class="stage-rail" aria-label="Forge build stages"><div class="stage-rail-inner"><span class="stage-label is-active" data-stage-label="recognize">RECOGNIZE</span><i>→</i><span class="stage-label" data-stage-label="connect">CONNECT</span><i>→</i><span class="stage-label" data-stage-label="test">TEST</span><i>→</i><span class="stage-label" data-stage-label="commit">COMMIT</span><i>→</i><span class="stage-label ticker-muted">REPEAT</span></div></div>
-
-      <section class="intro section-shell snap-section" id="how" data-stage="connect">
-        <div class="section-kicker">01 / The idea</div>
-        <div class="intro-grid"><h2>Software learned to meet you where you are. <em>Hardware should too.</em></h2><div><p>Vibe coding removed the blank-page problem for software. Forge applies that same generosity to the workbench.</p><p class="muted">Point. Ask. Place. Test. Every action becomes part of a build that you can understand and return to.</p></div></div>
-      </section>
-
-      <section class="proof section-shell snap-section" id="proof" data-stage="test">
-        <div class="proof-image"><img src="media/bench.jpg" alt="A phone showing Forge labels on a laptop and USB ports" /><div class="proof-stamp">REAL<br />BENCH<br /><small>· 2026 ·</small></div></div>
-        <div class="proof-copy"><div class="section-kicker">02 / The proof</div><h2>Not a diagram.<br /><em>A second set of eyes.</em></h2><p>Forge turns a phone camera into a patient hardware partner. It names what is in front of you, points to the exact place to act, and explains what changed when the circuit does not behave.</p><div class="stat-row"><div><strong>4</strong><span>steps in the loop</span></div><div><strong>0</strong><span>extra hardware needed to demo</span></div><div><strong>1</strong><span>working build, remembered</span></div></div></div>
-      </section>
-
-      <section class="surfaces section-shell snap-section" id="surfaces" data-stage="commit">
-        <div class="section-kicker">03 / The workspace</div><div class="surfaces-head"><h2>One bench.<br /><em>Four useful moments.</em></h2></div>
-        <div class="surface-grid">
-          <article><span class="surface-number">01</span><h3>Find a part</h3><p>Photograph the mess. Search it like a document. Matching parts light up in the live view.</p><a href="https://github.com/BrennanOwYong/hardware_sdlc">Inventory ↗</a></article>
-          <article><span class="surface-number">02</span><h3>Get guided</h3><p>Forge confirms the tip, checks the hole, and tells you how to move when you are off.</p><a href="https://github.com/BrennanOwYong/hardware_sdlc">Coach ↗</a></article>
-          <article><span class="surface-number">03</span><h3>Make it run</h3><p>Firmware is generated from the pins you actually used. Test it against the attached board.</p><a href="https://github.com/BrennanOwYong/hardware_sdlc">Bench ↗</a></article>
-          <article><span class="surface-number">04</span><h3>Keep the win</h3><p>Working wiring, firmware, photos, and the build journal become a commit you can diff.</p><a href="https://github.com/BrennanOwYong/hardware_sdlc">Timeline ↗</a></article>
-        </div>
-      </section>
-
-      <section class="video-band section-shell snap-section" data-stage="commit"><div class="video-copy"><div class="section-kicker">04 / In motion</div><h2>The loop is<br /><em>the product.</em></h2><p>Hey Forge, how do I plug my USB into my laptop? This is a simple use case but it shows the power of realtime understanding.</p></div><div class="video-wrap"><video controls muted loop poster="media/bench.jpg"><source src="media/wiring.MOV" type="video/quicktime" />Your browser does not support video playback.</video><span class="video-tag">WIRING PRACTICE / 00:18</span></div></section>
-
-      <section class="closing section-shell"><p class="eyebrow">Open prototype · built by Brennan Ow Yong</p><h2>Go from “I think this is right”<br />to <em>“I know why it works.”</em></h2><a class="button button-light" href="https://github.com/BrennanOwYong/hardware_sdlc">Read the source <span>↗</span></a></section>
+      <section class="hero"><div class="hero-copy reveal"><p class="overline"><span class="status-dot"></span> Camera-native hardware workspace · 2026</p><h1>Build hardware<br /><i>like software.</i></h1><p class="hero-lede">Forge turns the messy workbench into a guided, testable, remembered build. Point your camera. Place the part. Know why it works.</p><div class="hero-actions"><a class="solid-button" href="https://brennanowyong.github.io/hardware_sdlc/">Enter the experience <span>↗</span></a><a class="quiet-link" href="#system">Explore the system <span>↓</span></a></div><div class="hero-meta"><span>FORGE / 001</span><span>OPEN PROTOTYPE</span><span>ARDUINO UNO</span></div></div><div class="hero-visual reveal reveal-delay"><div class="visual-glow"></div><div class="visual-grid"></div><div class="device-card"><div class="device-top"><span>FORGE LIVE</span><span class="pulse">●</span></div><img src="media/app-inventory.png" alt="Forge inventory view identifying parts on a workbench" /><div class="device-bottom"><span>01 / RECOGNIZE</span><strong>Find every part.</strong></div></div><div class="hero-coordinate">01<br />°<br />23</div><div class="hero-caption">A second set<br />of eyes for the bench.</div></div></section>
+      <div class="stage-line" aria-label="Forge build stages"><span class="active">01 Recognize</span><span>02 Connect</span><span>03 Test</span><span>04 Commit</span><span class="line-fill"></span></div>
+      <section class="manifest section" id="system"><div class="section-label"><span>01</span><span>THE SYSTEM</span></div><div class="manifest-copy"><h2>The missing layer<br />between <i>idea</i> and <i>working board.</i></h2><p>Software learned to meet people where they are. Forge brings that generosity to the physical world: it sees what is in front of you, gives one clear next action, and keeps the state you earned.</p></div><div class="manifest-note"><span>SCROLL TO EXPLORE</span><span class="down-arrow">↓</span></div></section>
+      <section class="capabilities section" id="surfaces"><div class="section-label"><span>02</span><span>THE CAPABILITIES</span></div><div class="capability-intro"><h2>Four moments.<br /><i>One continuous loop.</i></h2><p>From the first photo to the next version, every action is part of a build you can understand and return to.</p></div><div class="capability-grid"><article class="capability capability-dark"><div class="cap-number">01 / 04</div><div class="cap-icon">⌁</div><h3>Recognize</h3><p>Photograph the mess. Forge names every part and makes the bench searchable.</p><a href="https://github.com/BrennanOwYong/hardware_sdlc">Open inventory <span>↗</span></a></article><article class="capability capability-image"><img src="media/app-assemble.png" alt="Forge guided assembly view" /><div class="image-shade"></div><div class="cap-overlay"><div class="cap-number">02 / 04</div><h3>Connect</h3><p>Guided placement confirms the right hole before you push the wire in.</p><a href="https://github.com/BrennanOwYong/hardware_sdlc">Open assembly <span>↗</span></a></div></article><article class="capability capability-acid"><div class="cap-number">03 / 04</div><div class="circuit-mark">D13 <span>—</span> LED <span>—</span> GND</div><h3>Test</h3><p>Firmware is generated from the pins you actually used. Compile it. Flash it. See the result.</p><a href="https://github.com/BrennanOwYong/hardware_sdlc">Open bench <span>↗</span></a></article><article class="capability capability-photo"><img src="media/app-timeline.png" alt="Forge timeline showing a versioned hardware build" /><div class="image-shade"></div><div class="cap-overlay"><div class="cap-number">04 / 04</div><h3>Commit</h3><p>Wiring, firmware, photos, and the journal become a version you can diff.</p><a href="https://github.com/BrennanOwYong/hardware_sdlc">Open timeline <span>↗</span></a></div></article></div></section>
+      <section class="proof section" id="proof"><div class="section-label"><span>03</span><span>THE PROOF</span></div><div class="proof-grid"><div class="proof-image"><img src="media/bench.jpg" alt="A real workbench with Forge guidance on screen" /><span class="image-index">02:18:44 / LIVE</span></div><div class="proof-copy"><p class="overline">Not a diagram.</p><h2>A patient partner<br />for the <i>messy middle.</i></h2><p>Forge is built for the last wire, the wrong hole, and the “why is this not working?” It does not leave you alone with a PDF. It watches, explains, and remembers.</p><div class="metrics"><div><strong>0</strong><span>extra hardware<br />needed to demo</span></div><div><strong>7</strong><span>steps in the<br />working circuit</span></div><div><strong>1</strong><span>build state<br />remembered</span></div></div></div></div></section>
+      <section class="motion section"><div class="motion-copy"><div class="section-label"><span>04</span><span>IN MOTION</span></div><h2>The loop<br />is <i>the product.</i></h2><p>Realtime understanding turns “which socket?” into a calm next step. Practice on the bundled footage, or point Forge at the real bench.</p><a class="quiet-link light-link" href="https://github.com/BrennanOwYong/hardware_sdlc">Read the engineering notes <span>↗</span></a></div><div class="motion-media"><video autoplay muted loop playsinline poster="media/bench.jpg" controls><source src="media/wiring.MOV" type="video/quicktime" /><source src="media/wiring.MOV" type="video/mp4" /></video><span class="video-label">WIRING PRACTICE / 00:18</span></div></section>
+      <section class="closing section"><p class="overline">Forge / Open prototype</p><h2>Go from “I think this is right”<br />to <i>“I know why it works.”</i></h2><div class="closing-actions"><a class="solid-button" href="https://github.com/BrennanOwYong/hardware_sdlc">Explore the build <span>↗</span></a><a class="outline-button" href="https://brennanowyong.github.io/hardware_sdlc/">Share the page <span>↗</span></a></div></section>
     </main>
-    <footer class="site-footer section-shell"><a class="wordmark" href="#top"><span class="mark">✦</span> forge</a><span>Vibe coding for hardware.</span><span>© 2026</span></footer>
-    <script src="https://cdn.jsdelivr.net/npm/animejs/dist/bundles/anime.umd.min.js"></script>
-    <script>
-      const { animate } = anime;
-      const slides = [...document.querySelectorAll('.carousel-slide')];
-      let current = 0;
-      let isAnimating = false;
-      const settleSlide = (slide) => { slide.classList.remove('is-active'); slide.style.zIndex = ''; slide.style.opacity = ''; slide.style.transform = ''; };
-      const showSlide = (next) => {
-        if (isAnimating || next === current) return;
-        isAnimating = true;
-        const outgoing = slides[current];
-        const incoming = slides[(next + slides.length) % slides.length];
-        incoming.classList.add('is-active');
-        incoming.style.zIndex = '3';
-        outgoing.style.zIndex = '2';
-        animate(incoming, { translateY: [-120, 0], opacity: [0, 1], duration: 760, ease: 'out(3)' });
-        animate(outgoing, { translateY: [0, 20], opacity: [1, 0], duration: 520, ease: 'in(2)', onComplete: () => { settleSlide(outgoing); current = (next + slides.length) % slides.length; isAnimating = false; } });
-      };
-      animate(slides[0], { translateY: [-70, 0], opacity: [0, 1], duration: 700, ease: 'out(3)' });
-      document.querySelector('.carousel-button.next').addEventListener('click', () => showSlide(current + 1));
-      document.querySelector('.carousel-button.previous').addEventListener('click', () => showSlide(current - 1));
-      setInterval(() => showSlide(current + 1), 6500);
-      const rail = document.querySelector('.stage-rail');
-      const labels = [...document.querySelectorAll('[data-stage-label]')];
-      const observer = new IntersectionObserver((entries) => entries.forEach((entry) => { if (!entry.isIntersecting) return; labels.forEach((label) => label.classList.toggle('is-active', label.dataset.stageLabel === entry.target.dataset.stage)); }), { rootMargin: '-45% 0px -45% 0px' });
-      document.querySelectorAll('[data-stage]').forEach((section) => observer.observe(section));
-      document.querySelectorAll('a[href^="#"]').forEach((link) => link.addEventListener('click', (event) => { const target = document.querySelector(link.getAttribute('href')); if (!target) return; event.preventDefault(); target.scrollIntoView({ behavior: 'smooth', block: 'start' }); }));
-    </script>
-    <script>
-      const wiringVideo = document.querySelector('.video-wrap video');
-      if (wiringVideo) {
-        wiringVideo.controls = false;
-        wiringVideo.autoplay = true;
-        wiringVideo.muted = true;
-        wiringVideo.playsInline = true;
-        wiringVideo.play().catch(() => {});
-      }
-    </script>
+    <footer><a class="brand" href="#top"><span class="brand-mark">✦</span><span>forge</span></a><span>Vibe coding for hardware.</span><span>© 2026 / Brennan Ow Yong</span></footer>
+    <script>const observer=new IntersectionObserver((entries)=>entries.forEach((entry)=>{if(entry.isIntersecting)entry.target.classList.add('is-visible')}),{threshold:.12});document.querySelectorAll('.reveal,.section').forEach((el)=>observer.observe(el));const reduce=window.matchMedia('(prefers-reduced-motion: reduce)').matches;if(!reduce)document.querySelectorAll('a[href^="#"]').forEach((link)=>link.addEventListener('click',(event)=>{const target=document.querySelector(link.getAttribute('href'));if(!target)return;event.preventDefault();target.scrollIntoView({behavior:'smooth'})}));</script>
   </body>
 </html>
